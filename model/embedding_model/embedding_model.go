@@ -12,7 +12,7 @@ type EmbeddingModelFactory func(ctx context.Context) (embedding.Embedder, error)
 var embeddingModelRegistry = make(map[string]EmbeddingModelFactory)
 
 func init() {
-	initArk()
+	//initArk()
 	initQwen()
 }
 
