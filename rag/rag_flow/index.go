@@ -56,29 +56,57 @@ func buildIndexingGraph(ctx context.Context) (compose.Runnable[document.Source, 
 	}
 
 	// 添加节点
-	_ = g.AddLoaderNode(Loader, document2.Loader)
-	_ = g.AddLambdaNode(Parser, compose.InvokableLambda(BuildParseNode))
-	_ = g.AddDocumentTransformerNode(Splitter, document2.Splitter)
-	_ = g.AddIndexerNode(Milvus, milvus, compose.WithOutputKey("milvus_res"))
-	_ = g.AddIndexerNode(ES, es, compose.WithOutputKey("es_res"))
-	_ = g.AddLambdaNode("Merge", compose.InvokableLambda(func(ctx context.Context, input map[string]any) ([]string, error) {
+	if err := g.AddLoaderNode(Loader, document2.Loader); err != nil {
+		return nil, err
+	}
+	if err := g.AddLambdaNode(Parser, compose.InvokableLambda(BuildParseNode)); err != nil {
+		return nil, err
+	}
+	if err := g.AddDocumentTransformerNode(Splitter, document2.Splitter); err != nil {
+		return nil, err
+	}
+	if err := g.AddIndexerNode(Milvus, milvus, compose.WithOutputKey("milvus_res")); err != nil {
+		return nil, err
+	}
+	if err := g.AddIndexerNode(ES, es, compose.WithOutputKey("es_res")); err != nil {
+		return nil, err
+	}
+	if err := g.AddLambdaNode("Merge", compose.InvokableLambda(func(ctx context.Context, input map[string]any) ([]string, error) {
 		var allIDs []string
 		for _, ids := range input {
 			i, _ := ids.([]string)
 			allIDs = append(allIDs, i...)
 		}
 		return allIDs, nil
-	}))
+	})); err != nil {
+		return nil, err
+	}
 
 	// 设置边
-	_ = g.AddEdge(compose.START, Loader)
-	_ = g.AddEdge(Loader, Parser)
-	_ = g.AddEdge(Parser, Splitter)
-	_ = g.AddEdge(Splitter, Milvus)
-	_ = g.AddEdge(Splitter, ES)
-	_ = g.AddEdge(Milvus, "Merge")
-	_ = g.AddEdge(ES, "Merge")
-	_ = g.AddEdge("Merge", compose.END)
+	if err := g.AddEdge(compose.START, Loader); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge(Loader, Parser); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge(Parser, Splitter); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge(Splitter, Milvus); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge(Splitter, ES); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge(Milvus, "Merge"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge(ES, "Merge"); err != nil {
+		return nil, err
+	}
+	if err := g.AddEdge("Merge", compose.END); err != nil {
+		return nil, err
+	}
 
 	// 编译图
 	r, err := g.Compile(

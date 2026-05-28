@@ -13,6 +13,7 @@ import (
 	"qqqai/rag/rag_tools/db"
 	"qqqai/rag/rag_tools/indexer"
 	"qqqai/rag/rag_tools/retriever"
+	"qqqai/tool/document"
 	"qqqai/tool/memory"
 	"qqqai/tool/sql_tools"
 	"qqqai/tool/storage"
@@ -90,6 +91,33 @@ func initBotDataPipeline(ctx context.Context) error {
 			return err
 		}
 		log.Printf("Milvus 客户端初始化成功")
+	}
+
+	if document.Loader == nil {
+		log.Printf("开始初始化 Document Loader")
+		document.Loader, err = document.NewLoader(ctx)
+		if err != nil {
+			return err
+		}
+		log.Printf("Document Loader 初始化成功")
+	}
+
+	if document.Parser == nil {
+		log.Printf("开始初始化 Document Parser")
+		document.Parser, err = document.NewParser(ctx)
+		if err != nil {
+			return err
+		}
+		log.Printf("Document Parser 初始化成功")
+	}
+
+	if document.Splitter == nil {
+		log.Printf("开始初始化 Document Splitter")
+		document.Splitter, err = document.NewSplitter(ctx)
+		if err != nil {
+			return err
+		}
+		log.Printf("Document Splitter 初始化成功")
 	}
 
 	log.Printf("开始注册 RAG Indexer/Retriever")
