@@ -1,0 +1,7 @@
+.env
+node_modules/
+qqqai.exe
+*.exe
+*.test
+*.out
+.claude/settings.local.json
