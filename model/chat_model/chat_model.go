@@ -12,7 +12,8 @@ type ChatModelFactory func(ctx context.Context) (model.BaseChatModel, error)
 var chatModelRegistry = make(map[string]ChatModelFactory)
 
 func init() {
-	initOpenAI()
+	initDeepSeek()
+	//initArk()
 }
 
 // registerChatModel 注册聊天模型进入工厂

@@ -14,7 +14,6 @@ require (
 	github.com/cloudwego/eino-ext/components/indexer/milvus v0.0.0-20260525035716-1372ee451d05
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.68
 	github.com/cloudwego/eino-ext/components/model/deepseek v0.1.6
-	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/cloudwego/eino-ext/components/retriever/es8 v0.0.0-20260525035716-1372ee451d05
 	github.com/cloudwego/eino-ext/components/retriever/milvus v0.0.0-20260525035716-1372ee451d05
 	github.com/cloudwego/eino-ext/components/tool/mcp/officialmcp v0.1.0

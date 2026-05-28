@@ -1,5 +1,3 @@
-//go:build unsupported
-
 package chat_model
 
 import (
