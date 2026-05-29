@@ -263,7 +263,7 @@ func applyDefaults(config *Config) {
 		config.Memory.MaxEntries = 20
 	}
 	if config.ChatModelType == "" {
-		config.ChatModelType = "openai"
+		config.ChatModelType = "deepseek"
 	}
 	if config.IntentModelType == "" {
 		config.IntentModelType = config.ChatModelType

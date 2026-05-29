@@ -30,7 +30,7 @@ func InitChatModel(apiKey, baseURL, modelName string) error {
 		return fmt.Errorf("模型名称不能为空")
 	}
 
-	cm, err := chat_model.GetChatModel(context.Background(), "openai")
+	cm, err := chat_model.GetChatModel(context.Background(), config.GlobalConfig.ChatModelType)
 	if err != nil {
 		return err
 	}

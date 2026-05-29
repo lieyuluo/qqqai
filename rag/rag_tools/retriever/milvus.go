@@ -3,6 +3,7 @@ package retriever
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"qqqai/config"
 	"qqqai/model/embedding_model"
 	"qqqai/rag/rag_tools/db"
@@ -26,13 +27,17 @@ func initMilvus() {
 		if err != nil {
 			return nil, err
 		}
+		outputFields, err := existingMilvusOutputFields(ctx, config.GlobalConfig.MilvusConf.CollectionName)
+		if err != nil {
+			return nil, err
+		}
 		ret, err := milvus.NewRetriever(ctx, &milvus.RetrieverConfig{
 			Client:       db.Milvus,
 			Embedding:    emb,
 			TopK:         topK,
 			Collection:   config.GlobalConfig.MilvusConf.CollectionName,
 			VectorField:  "vector",
-			OutputFields: []string{"id", "content", "metadata"},
+			OutputFields: outputFields,
 			MetricType:   entity.COSINE,
 			Sp:           sp,
 			VectorConverter: func(ctx context.Context, vectors [][]float64) ([]entity.Vector, error) {
@@ -50,18 +55,15 @@ func initMilvus() {
 				docs := make([]*schema.Document, result.IDs.Len())
 				for i := range docs {
 					docs[i] = &schema.Document{MetaData: map[string]any{}}
+					id, err := result.IDs.GetAsString(i)
+					if err != nil {
+						return nil, err
+					}
+					docs[i].ID = id
 				}
 
 				for _, field := range result.Fields {
 					switch field.Name() {
-					case "id":
-						for i := range docs {
-							id, err := result.IDs.GetAsString(i)
-							if err != nil {
-								return nil, err
-							}
-							docs[i].ID = id
-						}
 					case "content":
 						for i := range docs {
 							content, err := field.GetAsString(i)
@@ -76,14 +78,11 @@ func initMilvus() {
 							if err != nil {
 								return nil, err
 							}
-							if b, ok := raw.([]byte); ok {
-								_ = json.Unmarshal(b, &docs[i].MetaData)
-							}
+							mergeMetadata(docs[i].MetaData, raw)
 						}
 					}
 				}
 
-				// 写入相似度分数（Milvus 返回的是 distance）
 				for i := range docs {
 					if i < len(result.Scores) {
 						distance := float64(result.Scores[i])
@@ -101,4 +100,43 @@ func initMilvus() {
 
 		return ret, nil
 	})
+}
+
+func existingMilvusOutputFields(ctx context.Context, collectionName string) ([]string, error) {
+	wanted := []string{"content", "metadata"}
+	exists, err := db.Milvus.HasCollection(ctx, collectionName)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return wanted, nil
+	}
+
+	collection, err := db.Milvus.DescribeCollection(ctx, collectionName)
+	if err != nil {
+		return nil, err
+	}
+	fields := make(map[string]struct{}, len(collection.Schema.Fields))
+	for _, field := range collection.Schema.Fields {
+		fields[field.Name] = struct{}{}
+	}
+
+	outputFields := make([]string, 0, len(wanted))
+	for _, field := range wanted {
+		if _, ok := fields[field]; ok {
+			outputFields = append(outputFields, field)
+		}
+	}
+	return outputFields, nil
+}
+
+func mergeMetadata(metadata map[string]any, raw any) {
+	switch value := raw.(type) {
+	case []byte:
+		_ = json.Unmarshal(value, &metadata)
+	case string:
+		_ = json.Unmarshal([]byte(value), &metadata)
+	case map[string]any:
+		maps.Copy(metadata, value)
+	}
 }
