@@ -33,14 +33,14 @@ func initMilvus() {
 		}
 		log.Printf("embedding dim: %d", dim)
 
-		// 检查现有集合的维度是否匹配
+		// 检查现有集合的维度和字段是否匹配，不匹配则自动 Drop
 		if err := checkAndDropIfDimMismatch(ctx, config.GlobalConfig.MilvusConf.CollectionName, dim); err != nil {
-			log.Printf("检查集合维度失败: %v", err)
+			log.Printf("检查集合 Schema 失败: %v", err)
 		}
 
 		indexer, err := milvus.NewIndexer(ctx, buildMilvusIndexerConfig(dim))
 		if err != nil {
-			// 自动处理 schema 不匹配：删除旧集合并重建
+			// 自动处理 schema 不匹配：删除旧集合并重建 (双重兜底)
 			if strings.Contains(err.Error(), "collection schema not match") {
 				log.Printf("collection schema 不匹配，准备删除旧集合并重建: %s", config.GlobalConfig.MilvusConf.CollectionName)
 				_ = db.Milvus.ReleaseCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName)
@@ -175,21 +175,38 @@ func checkAndDropIfDimMismatch(ctx context.Context, collectionName string, expec
 		return fmt.Errorf("describe collection failed: %w", err)
 	}
 
+	schemaMatch := true
+	hasId, hasContent, hasMetadata := false, false, false
+
 	for _, field := range coll.Schema.Fields {
+		switch field.Name {
+		case "id":
+			hasId = true
+		case "content":
+			hasContent = true
+		case "metadata":
+			hasMetadata = true
+		}
+
 		if field.DataType == entity.FieldTypeFloatVector {
 			dimStr, ok := field.TypeParams["dim"]
-			if !ok {
-				continue
-			}
-			dim, err := strconv.Atoi(dimStr)
-			if err != nil {
-				continue
-			}
-
-			if dim != expectedDim {
-				log.Fatalf("集合维度不匹配: 现有维度=%d, 预期维度=%d", dim, expectedDim)
+			if ok {
+				dim, err := strconv.Atoi(dimStr)
+				if err == nil && dim != expectedDim {
+					schemaMatch = false
+				}
 			}
 		}
+	}
+
+	// 如果维度不匹配，或者缺少必要的字段，则删除旧集合让 Indexer 自动重建
+	if !schemaMatch || !hasId || !hasContent || !hasMetadata {
+		log.Printf("集合 schema 不匹配 (dimMatch=%v, id=%v, content=%v, metadata=%v)，准备删除旧集合并重建: %s", schemaMatch, hasId, hasContent, hasMetadata, collectionName)
+		_ = db.Milvus.ReleaseCollection(ctx, collectionName)
+		if err := db.Milvus.DropCollection(ctx, collectionName); err != nil {
+			return fmt.Errorf("drop collection failed: %w", err)
+		}
+		return waitCollectionDropped(ctx, collectionName, 15*time.Second)
 	}
 	return nil
 }
