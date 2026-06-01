@@ -43,7 +43,9 @@ func initMilvus() {
 			// 自动处理 schema 不匹配：删除旧集合并重建 (双重兜底)
 			if strings.Contains(err.Error(), "collection schema not match") {
 				log.Printf("collection schema 不匹配，准备删除旧集合并重建: %s", config.GlobalConfig.MilvusConf.CollectionName)
-				_ = db.Milvus.ReleaseCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName)
+				if err := db.Milvus.ReleaseCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName); err != nil {
+					log.Printf("Release 集合失败 (可忽略): %v", err)
+				}
 				if dropErr := db.Milvus.DropCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName); dropErr != nil {
 					return nil, fmt.Errorf("drop collection failed: %w", dropErr)
 				}
