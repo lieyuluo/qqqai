@@ -19,17 +19,7 @@ var (
 	sessions  sync.Map
 )
 
-func InitChatModel(apiKey, baseURL, modelName string) error {
-	if strings.TrimSpace(apiKey) == "" {
-		return fmt.Errorf("API Key 不能为空")
-	}
-	if strings.TrimSpace(baseURL) == "" {
-		return fmt.Errorf("API Base URL 不能为空")
-	}
-	if strings.TrimSpace(modelName) == "" {
-		return fmt.Errorf("模型名称不能为空")
-	}
-
+func InitChatModel() error {
 	cm, err := chat_model.GetChatModel(context.Background(), config.GlobalConfig.ChatModelType)
 	if err != nil {
 		return err

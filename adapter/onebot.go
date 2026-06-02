@@ -1,10 +1,14 @@
 package adapter
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
+	"time"
 )
 
 // Event 表示 OneBot V11 的事件结构
@@ -29,6 +33,19 @@ type FileInfo struct {
 	Size  int64  `json:"size"`
 	BusID int64  `json:"busid"`
 	URL   string `json:"url"`
+}
+
+type groupFileURLRequest struct {
+	GroupID int64  `json:"group_id"`
+	FileID  string `json:"file_id"`
+	BusID   int64  `json:"busid"`
+}
+
+type groupFileURLResponse struct {
+	RetCode int `json:"retcode"`
+	Data    struct {
+		URL string `json:"url"`
+	} `json:"data"`
 }
 
 // ReplyAction 表示回复动作结构
@@ -105,6 +122,63 @@ func BuildSendPrivateMsgAction(userID int64, text string) []byte {
 	}
 
 	return data
+}
+
+func FetchGroupFileURL(ctx context.Context, httpBaseURL, accessToken string, groupID int64, fileID string, busID int64) (string, error) {
+	payload := groupFileURLRequest{
+		GroupID: groupID,
+		FileID:  fileID,
+		BusID:   busID,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("构造获取群文件链接请求失败: %w", err)
+	}
+
+	httpBaseURL = strings.TrimRight(strings.TrimSpace(httpBaseURL), "/")
+	if httpBaseURL == "" {
+		return "", fmt.Errorf("NapCat HTTP 地址不能为空")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpBaseURL+"/get_group_file_url", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("创建获取群文件链接请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	SetBearerAuthHeader(req, accessToken)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("请求群文件链接失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("获取群文件链接接口返回状态码 %d", resp.StatusCode)
+	}
+
+	var result groupFileURLResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("解析群文件链接响应失败: %w", err)
+	}
+	if result.RetCode != 0 {
+		return "", fmt.Errorf("获取群文件链接失败，retcode=%d", result.RetCode)
+	}
+
+	url := strings.TrimSpace(result.Data.URL)
+	if url == "" {
+		return "", fmt.Errorf("获取群文件链接响应缺少 data.url")
+	}
+	return url, nil
+}
+
+func SetBearerAuthHeader(req *http.Request, accessToken string) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 }
 
 // ExtractCleanText 判断消息中是否包含 [CQ:at,qq={botQQ}]，剥离该 CQ 码并返回清理后的文本

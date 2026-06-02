@@ -24,6 +24,7 @@ type Config struct {
 	QwenConf           QwenConfig          `yaml:"qwen"`
 	MySQLConf          MySQLConfig         `yaml:"mysql"`
 	RedisConf          RedisConfig         `yaml:"redis"`
+	NapCatConf         NapCatConfig        `yaml:"napcat"`
 	LangSmithConf      LangSmithConfig     `yaml:"langsmith"`
 	MilvusConf         MilvusConfig        `yaml:"milvus"`
 	ESConf             ElasticsearchConfig `yaml:"elasticsearch"`
@@ -37,10 +38,7 @@ type BotConfig struct {
 
 // LLMConfig 大模型相关配置
 type LLMConfig struct {
-	APIKey    string `yaml:"api_key"`
-	BaseURL   string `yaml:"base_url"`
-	ModelName string `yaml:"model_name"`
-	Persona   string `yaml:"persona"`
+	Persona string `yaml:"persona"`
 }
 
 type ArkConfig struct {
@@ -73,6 +71,10 @@ type RedisConfig struct {
 	Addr     string `yaml:"addr"`
 	Password string `yaml:"password"`
 	DB       string `yaml:"db"`
+}
+
+type NapCatConfig struct {
+	HTTPBaseURL string `yaml:"http_base_url"`
 }
 
 type LangSmithConfig struct {
@@ -135,15 +137,6 @@ func LoadConfig(configPath string) (*Config, error) {
 	if config.Bot.QQ == 0 {
 		return nil, fmt.Errorf("机器人QQ号不能为空")
 	}
-	if isBlank(config.LLM.APIKey) || config.LLM.APIKey == "your-api-key" {
-		return nil, fmt.Errorf("API Key 不能为空或占位值")
-	}
-	if isBlank(config.LLM.BaseURL) {
-		return nil, fmt.Errorf("API Base URL 不能为空")
-	}
-	if isBlank(config.LLM.ModelName) || config.LLM.ModelName == "your-model-name" {
-		return nil, fmt.Errorf("模型名称不能为空或占位值")
-	}
 
 	// 设置全局配置
 	GlobalConfig = config
@@ -175,9 +168,6 @@ func applyEnvOverrides(config *Config) {
 
 	setInt64(&config.Bot.QQ, "BOT_QQ")
 	setString(&config.Bot.Port, "BOT_PORT")
-	setString(&config.LLM.APIKey, "LLM_API_KEY")
-	setString(&config.LLM.BaseURL, "LLM_BASE_URL")
-	setString(&config.LLM.ModelName, "LLM_MODEL_NAME")
 	setString(&config.LLM.Persona, "LLM_PERSONA")
 	config.LLM.Persona = strings.ReplaceAll(config.LLM.Persona, `\n`, "\n")
 	setString(&config.ChatModelType, "CHAT_MODEL_TYPE")
@@ -200,6 +190,7 @@ func applyEnvOverrides(config *Config) {
 	setString(&config.RedisConf.Addr, "REDIS_ADDR")
 	setString(&config.RedisConf.Password, "REDIS_PASSWORD")
 	setString(&config.RedisConf.DB, "REDIS_DB")
+	setString(&config.NapCatConf.HTTPBaseURL, "NAPCAT_HTTP_BASE_URL")
 	setString(&config.LangSmithConf.APIKey, "LANGSMITH_API_KEY")
 	setString(&config.LangSmithConf.APIUrl, "LANGSMITH_API_URL")
 	setString(&config.MilvusConf.MilvusAddr, "MILVUS_ADDR")
@@ -286,6 +277,9 @@ func applyDefaults(config *Config) {
 	if config.RedisConf.DB == "" {
 		config.RedisConf.DB = "0"
 	}
+	if config.NapCatConf.HTTPBaseURL == "" {
+		config.NapCatConf.HTTPBaseURL = "http://127.0.0.1:3000"
+	}
 }
 
 func isBlank(value string) bool {
@@ -309,30 +303,6 @@ func GetPort() string {
 		return GlobalConfig.Bot.Port
 	}
 	return ":" + GlobalConfig.Bot.Port
-}
-
-// GetAPIKey 获取API Key
-func GetAPIKey() string {
-	if GlobalConfig == nil {
-		return ""
-	}
-	return GlobalConfig.LLM.APIKey
-}
-
-// GetBaseURL 获取API Base URL
-func GetBaseURL() string {
-	if GlobalConfig == nil {
-		return ""
-	}
-	return GlobalConfig.LLM.BaseURL
-}
-
-// GetModelName 获取模型名称
-func GetModelName() string {
-	if GlobalConfig == nil {
-		return ""
-	}
-	return GlobalConfig.LLM.ModelName
 }
 
 // GetPersona 获取AI人设提示词
@@ -373,4 +343,11 @@ func GetWriteTimeout() int {
 		return 10
 	}
 	return GlobalConfig.Websocket.WriteTimeout
+}
+
+func GetNapCatHTTPBaseURL() string {
+	if GlobalConfig == nil || strings.TrimSpace(GlobalConfig.NapCatConf.HTTPBaseURL) == "" {
+		return "http://127.0.0.1:3000"
+	}
+	return strings.TrimRight(strings.TrimSpace(GlobalConfig.NapCatConf.HTTPBaseURL), "/")
 }

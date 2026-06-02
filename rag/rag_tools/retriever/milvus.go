@@ -25,7 +25,6 @@ type safeMilvusRetriever struct {
 }
 
 func (s *safeMilvusRetriever) Retrieve(ctx context.Context, query string, opts ...retriever.Option) ([]*schema.Document, error) {
-	log.Printf("[Retriever][Milvus] Retrieve called: actualRetrieverNil=%t query=%q opts=%d", s.actualRetriever == nil, query, len(opts))
 	if s.actualRetriever == nil {
 		log.Println("[Retriever] Milvus 集合不存在或刚被清理，跳过检索 (请上传文件以构建知识库)")
 		return []*schema.Document{}, nil
@@ -35,27 +34,17 @@ func (s *safeMilvusRetriever) Retrieve(ctx context.Context, query string, opts .
 		log.Printf("[Retriever][Milvus] actualRetriever.Retrieve failed: %v", err)
 		return nil, err
 	}
-	log.Printf("[Retriever][Milvus] actualRetriever.Retrieve succeeded: docs=%d", len(docs))
 	return docs, nil
 }
 
 func initMilvus() {
 	registerRetriever("milvus", func(ctx context.Context) (retriever.Retriever, error) {
-		// ==========================================
-		// 🚨 新增：醒目打印当前使用的集合名称
-		// ==========================================
 		currentCollection := config.GlobalConfig.MilvusConf.CollectionName
-		log.Println("======================================================")
-		log.Printf("🔥 [Retriever][Milvus] 当前正在使用的表名: 【 %s 】", currentCollection)
-		log.Println("======================================================")
-
-		log.Printf("[Retriever][Milvus] factory start: collection=%s topK=%s embeddingModel=%s", currentCollection, config.GlobalConfig.MilvusConf.TopK, config.GlobalConfig.EmbeddingModelType)
 
 		topK, err := strconv.Atoi(config.GlobalConfig.MilvusConf.TopK)
 		if err != nil || topK <= 0 {
 			topK = 10
 		}
-		log.Printf("[Retriever][Milvus] resolved topK=%d", topK)
 
 		emb, err := embedding_model.GetEmbeddingModel(context.Background(), config.GlobalConfig.EmbeddingModelType)
 		if err != nil {
@@ -65,19 +54,15 @@ func initMilvus() {
 
 		// 1. 获取维度
 		dim := getEmbeddingDim(ctx)
-		log.Printf("[Retriever][Milvus] embedding dimension detected: dim=%d", dim)
 
 		// 始终执行 schema 检查。如果 dim 为 0，我们只跳过维度比对，
 		// 但依然会严格验证 'content' 和 'metadata' 字段是否存在。
-		log.Printf("[Retriever][Milvus] schema check start")
-		if err := checkAndDropIfDimMismatch(ctx, config.GlobalConfig.MilvusConf.CollectionName, dim); err != nil {
+		if err := checkAndDropIfDimMismatch(ctx, currentCollection, dim); err != nil {
 			log.Printf("[Retriever][Milvus] schema check failed: %v", err)
-		} else {
-			log.Printf("[Retriever][Milvus] schema check finished")
 		}
 
 		// 2. 检查集合是否还存在（可能刚被自动删除或系统刚启动还没传文件）
-		exists, err := db.Milvus.HasCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName)
+		exists, err := db.Milvus.HasCollection(ctx, currentCollection)
 		if err != nil {
 			log.Printf("[Retriever][Milvus] HasCollection failed after schema check: %v", err)
 			return nil, err
@@ -87,23 +72,15 @@ func initMilvus() {
 			return &safeMilvusRetriever{actualRetriever: nil}, nil
 		}
 
-		// ==========================================
 		// 3. 强制释放并全量加载集合 (解决 Partial Load 导致的 "extra output fields" 报错)
-		// ==========================================
-		log.Printf("[Retriever][Milvus] 准备重新全量加载集合以清除脏缓存: %s", config.GlobalConfig.MilvusConf.CollectionName)
+		_ = db.Milvus.ReleaseCollection(ctx, currentCollection)
 
-		// 先释放内存中的集合
-		_ = db.Milvus.ReleaseCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName)
-
-		// 再强制全量加载 (false 表示同步加载，等待加载完毕)
-		err = db.Milvus.LoadCollection(ctx, config.GlobalConfig.MilvusConf.CollectionName, false)
+		err = db.Milvus.LoadCollection(ctx, currentCollection, false)
 		if err != nil {
 			log.Printf("[Retriever][Milvus] LoadCollection 失败 (可能是新集合尚未上传文件建索引): %v", err)
 			log.Printf("[Retriever] 集合尚未就绪，降级为空检索器，保障普通聊天正常进行")
 			return &safeMilvusRetriever{actualRetriever: nil}, nil
 		}
-		log.Printf("[Retriever][Milvus] 全量加载集合成功！")
-		// ==========================================
 
 		sp, _ := entity.NewIndexAUTOINDEXSearchParam(1)
 		outputFields := []string{"content", "metadata"}
@@ -177,7 +154,6 @@ func initMilvus() {
 		}
 
 		// 包装一层返回，确保安全
-		log.Printf("[Retriever][Milvus] milvus.NewRetriever succeeded: outputFields=%v", outputFields)
 		return &safeMilvusRetriever{actualRetriever: ret}, nil
 	})
 }
@@ -208,10 +184,8 @@ func getEmbeddingDim(ctx context.Context) int {
 }
 
 func checkAndDropIfDimMismatch(ctx context.Context, collectionName string, expectedDim int) error {
-	log.Printf("[Retriever][Milvus] checkAndDropIfDimMismatch called: collection=%s expectedDim=%d", collectionName, expectedDim)
 	exists, err := db.Milvus.HasCollection(ctx, collectionName)
 	if err != nil || !exists {
-		log.Printf("[Retriever][Milvus] schema check collection existence result: exists=%t err=%v", exists, err)
 		return err
 	}
 
@@ -227,7 +201,6 @@ func checkAndDropIfDimMismatch(ctx context.Context, collectionName string, expec
 
 	for _, field := range coll.Schema.Fields {
 		fieldNames = append(fieldNames, field.Name)
-		log.Printf("[Retriever][Milvus] schema field: name=%s type=%v typeParams=%v", field.Name, field.DataType, field.TypeParams)
 		switch field.Name {
 		case "id":
 			hasId = true
@@ -247,10 +220,8 @@ func checkAndDropIfDimMismatch(ctx context.Context, collectionName string, expec
 			}
 		}
 	}
-	log.Printf("[Retriever][Milvus] schema check result before drop condition: fields=%v schemaMatch=%t hasId=%t hasContent=%t hasMetadata=%t", fieldNames, schemaMatch, hasId, hasContent, hasMetadata)
 
 	if !schemaMatch || !hasId || !hasContent || !hasMetadata {
-		log.Printf("[Retriever][Milvus] drop condition entered: schemaMatch=%t hasId=%t hasContent=%t hasMetadata=%t", schemaMatch, hasId, hasContent, hasMetadata)
 		log.Printf("[Retriever] 检测到集合 Schema 缺失必要字段或维度错误，准备清理旧集合: %s", collectionName)
 		if err := db.Milvus.ReleaseCollection(ctx, collectionName); err != nil {
 			log.Printf("Release 集合失败 (可忽略): %v", err)
@@ -269,7 +240,6 @@ func checkAndDropIfDimMismatch(ctx context.Context, collectionName string, expec
 			time.Sleep(500 * time.Millisecond)
 		}
 	} else {
-		log.Printf("[Retriever][Milvus] drop condition skipped: schema is considered valid")
 	}
 	return nil
 }
