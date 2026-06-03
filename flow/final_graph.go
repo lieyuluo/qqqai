@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"fmt"
+	"qqqai/ai"
 	"qqqai/config"
 	"qqqai/model/chat_model"
 	"qqqai/tool"
@@ -18,16 +19,18 @@ import (
 type FinalGraphRequest struct {
 	Query     string `json:"query" binding:"required"`
 	SessionID string `json:"session_id,omitempty"`
-	SQL       string `json:"sql,omitempty"`  // 用于存储生成的 SQL
-	Docs      string `json:"docs,omitempty"` // 用于存储检索到的表结构
+	SQL       string `json:"sql,omitempty"`
+	Docs      string `json:"docs,omitempty"`
 }
 
 const (
 	Trans_List   = "Trans_List"
 	Intent_Model = "Intent_Model"
 	React        = "React"
+	RAGChat      = "RAGChat"
 	Chat         = "Chat"
 	ChatToEnd    = "ChatToEnd"
+	RAGToEnd     = "RAGToEnd"
 	ToToolCall   = "ToToolCall"
 	MCP          = "MCP"
 )
@@ -42,7 +45,7 @@ var (
 	finalGraphInitErr error
 )
 
-// InitFinalGraph 在应用启动时编译并缓存全局图
+// InitFinalGraph compiles and caches the application-level routing graph.
 func InitFinalGraph(ctx context.Context, store compose.CheckPointStore) error {
 	finalGraphOnce.Do(func() {
 		cachedFinalGraph, finalGraphInitErr = buildFinalGraph(ctx, store)
@@ -50,7 +53,7 @@ func InitFinalGraph(ctx context.Context, store compose.CheckPointStore) error {
 	return finalGraphInitErr
 }
 
-// GetFinalGraph 返回缓存的总控图
+// GetFinalGraph returns the cached application-level routing graph.
 func GetFinalGraph() (compose.Runnable[FinalGraphRequest, []*schema.Message], error) {
 	if cachedFinalGraph == nil {
 		return nil, fmt.Errorf("FinalGraph 未初始化，请先调用 InitFinalGraph")
@@ -65,18 +68,32 @@ func buildFinalGraph(ctx context.Context, store compose.CheckPointStore) (compos
 		}),
 	)
 
-	// 意图识别模型
 	_ = g.AddLambdaNode(Intent_Model, compose.InvokableLambda(func(ctx context.Context, input FinalGraphRequest) (*schema.Message, error) {
-		_ = compose.ProcessState[*FinalGraphRequest](ctx, func(ctx context.Context, state *FinalGraphRequest) error {
+		if err := compose.ProcessState[*FinalGraphRequest](ctx, func(ctx context.Context, state *FinalGraphRequest) error {
 			*state = input
 			return nil
-		})
+		}); err != nil {
+			return nil, err
+		}
 
 		intentTemp := prompt.FromMessages(schema.FString,
-			schema.SystemMessage("你是一个意图识别专家。请分析用户输入，如果是关于数据库查询、数据统计、报表需求，回答 'SQL'；否则回答 'Chat'。"),
+			schema.SystemMessage(`你是一个意图识别专家。请分析用户输入，只输出 SQL、RAG 或 Chat 三个标签之一，不要输出解释。
+
+SQL：
+用户在问数据库查询、SQL 生成、数据统计、指标分析、报表需求、结构化数据分析、业务数据计算。
+
+RAG：
+用户在问文件、文档、知识库、上传资料、已索引内容、历史资料，或者问题明显需要结合外部资料 / 项目资料 / 文档内容回答。
+
+Chat：
+普通聊天、闲聊、角色对话、写作、润色、翻译、常识问答、代码解释、无需数据库和文件检索的问题。`),
 			schema.UserMessage("{query}"),
 		)
-		cm, _ := chat_model.GetChatModel(context.Background(), config.GlobalConfig.IntentModelType)
+
+		cm, err := chat_model.GetChatModel(ctx, config.GlobalConfig.IntentModelType)
+		if err != nil {
+			return nil, err
+		}
 		output, err := intentTemp.Format(ctx, map[string]any{
 			"query": input.Query,
 		})
@@ -85,7 +102,7 @@ func buildFinalGraph(ctx context.Context, store compose.CheckPointStore) (compos
 		}
 		return cm.Generate(ctx, output)
 	}))
-	//  React 子图
+
 	react, err := BuildReactGraph(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("构建 React 子图失败: %w", err)
@@ -94,15 +111,16 @@ func buildFinalGraph(ctx context.Context, store compose.CheckPointStore) (compos
 		return []*schema.Message{schema.UserMessage(state.Query)}, nil
 	}))
 
-	// 聊天路径
-	_ = g.AddLambdaNode(Chat, compose.InvokableLambda(func(ctx context.Context, input []*schema.Message) (*schema.Message, error) {
+	_ = g.AddLambdaNode(RAGChat, compose.InvokableLambda(func(ctx context.Context, input []*schema.Message) (*schema.Message, error) {
 		var query string
 		var sessionID string
-		_ = compose.ProcessState[*FinalGraphRequest](ctx, func(ctx context.Context, state *FinalGraphRequest) error {
+		if err := compose.ProcessState[*FinalGraphRequest](ctx, func(ctx context.Context, state *FinalGraphRequest) error {
 			query = state.Query
 			sessionID = state.SessionID
 			return nil
-		})
+		}); err != nil {
+			return nil, err
+		}
 		if sessionID == "" {
 			if value, ok := ctx.Value("session_id").(string); ok {
 				sessionID = value
@@ -119,24 +137,54 @@ func buildFinalGraph(ctx context.Context, store compose.CheckPointStore) (compos
 		return ragRunner.Invoke(ctx, RAGChatInput{Query: query, SessionID: sessionID})
 	}))
 
-	_ = g.AddLambdaNode(ChatToEnd, compose.InvokableLambda(tool.MsgToMsgs))
+	_ = g.AddLambdaNode(Chat, compose.InvokableLambda(func(ctx context.Context, input []*schema.Message) (*schema.Message, error) {
+		var query string
+		var sessionID string
+		if err := compose.ProcessState[*FinalGraphRequest](ctx, func(ctx context.Context, state *FinalGraphRequest) error {
+			query = state.Query
+			sessionID = state.SessionID
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		if sessionID == "" {
+			if value, ok := ctx.Value("session_id").(string); ok {
+				sessionID = value
+			}
+		}
+		if sessionID == "" {
+			sessionID = "default-session"
+		}
 
-	// 转换节点
+		reply, err := ai.GenerateReply(ctx, sessionID, query)
+		if err != nil {
+			return nil, err
+		}
+		return schema.AssistantMessage(reply, nil), nil
+	}))
+
+	_ = g.AddLambdaNode(ChatToEnd, compose.InvokableLambda(tool.MsgToMsgs))
+	_ = g.AddLambdaNode(RAGToEnd, compose.InvokableLambda(tool.MsgToMsgs))
 	_ = g.AddLambdaNode(Trans_List, compose.InvokableLambda(tool.MsgToMsgs))
 
-	// 意图分支
 	_ = g.AddBranch(Trans_List, compose.NewGraphBranch(func(ctx context.Context, input []*schema.Message) (endNode string, err error) {
-		content := strings.ToUpper(input[len(input)-1].Content)
+		if len(input) == 0 {
+			return Chat, nil
+		}
+		content := strings.ToUpper(strings.TrimSpace(input[len(input)-1].Content))
 		if strings.Contains(content, "SQL") {
 			return React, nil
 		}
+		if strings.Contains(content, "RAG") {
+			return RAGChat, nil
+		}
 		return Chat, nil
 	}, map[string]bool{
-		React: true,
-		Chat:  true,
+		React:   true,
+		RAGChat: true,
+		Chat:    true,
 	}))
 
-	// 类型转换：[]*Message -> *Message
 	_ = g.AddLambdaNode(ToToolCall, compose.InvokableLambda(func(ctx context.Context, input []*schema.Message) (*schema.Message, error) {
 		msg, err := tool.MsgsToMsg(ctx, input)
 		if err != nil {
@@ -146,7 +194,6 @@ func buildFinalGraph(ctx context.Context, store compose.CheckPointStore) (compos
 		return tool.MsgToSQLToolCall(ctx, msg)
 	}))
 
-	// MCP 执行节点
 	tools, err := sql_tools.GetMCPTool(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("获取 MCP 工具失败: %w", err)
@@ -159,13 +206,15 @@ func buildFinalGraph(ctx context.Context, store compose.CheckPointStore) (compos
 	}
 	_ = g.AddToolsNode(MCP, mcpTool)
 
-	// 连线
 	_ = g.AddEdge(compose.START, Intent_Model)
 	_ = g.AddEdge(Intent_Model, Trans_List)
 
 	_ = g.AddEdge(React, ToToolCall)
 	_ = g.AddEdge(ToToolCall, MCP)
 	_ = g.AddEdge(MCP, compose.END)
+
+	_ = g.AddEdge(RAGChat, RAGToEnd)
+	_ = g.AddEdge(RAGToEnd, compose.END)
 
 	_ = g.AddEdge(Chat, ChatToEnd)
 	_ = g.AddEdge(ChatToEnd, compose.END)

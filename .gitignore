@@ -4,4 +4,4 @@ qqqai.exe
 *.exe
 *.test
 *.out
-.claude/settings.local.json
+.claude

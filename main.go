@@ -128,6 +128,10 @@ func initBotDataPipeline(ctx context.Context) error {
 		return err
 	}
 
+	if err := ai.InitChatModel(); err != nil {
+		return err
+	}
+
 	if err := flow.InitFinalGraph(ctx, storage.NewRedisCheckPointStore()); err != nil {
 		return err
 	}
@@ -145,12 +149,6 @@ func main() {
 	ctx := context.Background()
 	if err := initBotDataPipeline(ctx); err != nil {
 		log.Fatalf("初始化 QQBot 数据处理流程失败: %v", err)
-	}
-
-	// 初始化聊天模型
-	err = ai.InitChatModel()
-	if err != nil {
-		log.Fatalf("初始化聊天模型失败: %v", err)
 	}
 
 	// 注册路由

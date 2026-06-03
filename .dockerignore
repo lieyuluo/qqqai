@@ -7,3 +7,4 @@ bin/
 *.exe
 *.test
 *.out
+.claude
