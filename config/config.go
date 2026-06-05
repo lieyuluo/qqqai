@@ -25,6 +25,7 @@ type Config struct {
 	MySQLConf          MySQLConfig         `yaml:"mysql"`
 	RedisConf          RedisConfig         `yaml:"redis"`
 	NapCatConf         NapCatConfig        `yaml:"napcat"`
+	IndexerConf        IndexerConfig       `yaml:"indexer"`
 	LangSmithConf      LangSmithConfig     `yaml:"langsmith"`
 	MilvusConf         MilvusConfig        `yaml:"milvus"`
 	ESConf             ElasticsearchConfig `yaml:"elasticsearch"`
@@ -75,6 +76,12 @@ type RedisConfig struct {
 
 type NapCatConfig struct {
 	HTTPBaseURL string `yaml:"http_base_url"`
+	AccessToken string `yaml:"access_token"`
+}
+
+type IndexerConfig struct {
+	URL            string `yaml:"url"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 type LangSmithConfig struct {
@@ -191,6 +198,9 @@ func applyEnvOverrides(config *Config) {
 	setString(&config.RedisConf.Password, "REDIS_PASSWORD")
 	setString(&config.RedisConf.DB, "REDIS_DB")
 	setString(&config.NapCatConf.HTTPBaseURL, "NAPCAT_HTTP_BASE_URL")
+	setString(&config.NapCatConf.AccessToken, "NAPCAT_ACCESS_TOKEN")
+	setString(&config.IndexerConf.URL, "INDEXER_URL")
+	setInt(&config.IndexerConf.TimeoutSeconds, "INDEXER_TIMEOUT_SECONDS")
 	setString(&config.LangSmithConf.APIKey, "LANGSMITH_API_KEY")
 	setString(&config.LangSmithConf.APIUrl, "LANGSMITH_API_URL")
 	setString(&config.MilvusConf.MilvusAddr, "MILVUS_ADDR")
@@ -280,6 +290,9 @@ func applyDefaults(config *Config) {
 	if config.NapCatConf.HTTPBaseURL == "" {
 		config.NapCatConf.HTTPBaseURL = "http://127.0.0.1:3000"
 	}
+	if config.IndexerConf.TimeoutSeconds == 0 {
+		config.IndexerConf.TimeoutSeconds = 180
+	}
 }
 
 func isBlank(value string) bool {
@@ -350,4 +363,25 @@ func GetNapCatHTTPBaseURL() string {
 		return "http://127.0.0.1:3000"
 	}
 	return strings.TrimRight(strings.TrimSpace(GlobalConfig.NapCatConf.HTTPBaseURL), "/")
+}
+
+func GetNapCatAccessToken() string {
+	if GlobalConfig == nil {
+		return ""
+	}
+	return strings.TrimSpace(GlobalConfig.NapCatConf.AccessToken)
+}
+
+func GetIndexerURL() string {
+	if GlobalConfig == nil {
+		return ""
+	}
+	return strings.TrimRight(strings.TrimSpace(GlobalConfig.IndexerConf.URL), "/")
+}
+
+func GetIndexerTimeout() int {
+	if GlobalConfig == nil || GlobalConfig.IndexerConf.TimeoutSeconds <= 0 {
+		return 180
+	}
+	return GlobalConfig.IndexerConf.TimeoutSeconds
 }

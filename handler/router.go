@@ -3,26 +3,19 @@ package handler
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
-	"os"
-	"path/filepath"
 	"qqqai/adapter"
 	"qqqai/ai"
 	"qqqai/config"
 	"qqqai/flow"
-	"qqqai/rag/rag_flow"
+	"qqqai/tool/groupfile"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gorilla/websocket"
 )
-
-const napCatAccessToken = "yAEsax.~ofNwpFDk"
 
 // HandleWSMessage 处理 WebSocket 接收到的事件和 AI 引擎
 func HandleWSMessage(conn *websocket.Conn, message []byte, botQQ int64, writeTimeout time.Duration, writeMu *sync.Mutex) {
@@ -123,95 +116,28 @@ func handleGroupFileEvent(conn *websocket.Conn, event *adapter.Event, writeTimeo
 }
 
 func indexUploadedGroupFile(ctx context.Context, event *adapter.Event) string {
-	if event == nil || event.File == nil {
+	req, err := groupfile.RequestFromEvent(event)
+	if err != nil {
 		log.Printf("群文件事件缺少文件信息，忽略处理")
 		return "收到群文件事件，但缺少文件信息，无法索引。"
 	}
 
-	fileName := strings.TrimSpace(event.File.Name)
-	if fileName == "" {
-		fileName = "未命名文件"
-	}
-	fileID := strings.TrimSpace(event.File.ID)
-	if fileID == "" || event.File.BusID == 0 {
-		log.Printf("群文件 %s 缺少 file_id 或 busid，无法获取下载地址", fileName)
-		return fmt.Sprintf("收到群文件 %s，但事件中缺少文件标识，无法自动索引。", fileName)
-	}
-
-	fileURL, err := adapter.FetchGroupFileURL(ctx, config.GetNapCatHTTPBaseURL(), napCatAccessToken, event.GroupID, fileID, event.File.BusID)
-	if err != nil {
-		log.Printf("获取群文件 %s 下载地址失败: %v", fileName, err)
-		return fmt.Sprintf("收到群文件 %s，但获取下载地址失败: %v", fileName, err)
-	}
-
-	path, err := downloadGroupFile(ctx, fileName, fileURL, event.File.Size)
-	if err != nil {
-		log.Printf("下载群文件 %s 失败: %v", fileName, err)
-		return fmt.Sprintf("群文件 %s 下载失败: %v", fileName, err)
-	}
-	defer os.Remove(path)
-
-	runnable, err := rag_flow.GetIndexingGraph()
-	if err != nil {
-		log.Printf("获取 RAG 索引图失败: %v", err)
-		return fmt.Sprintf("群文件 %s 已下载，但索引图未初始化，暂时无法入库。", fileName)
-	}
-
-	ids, err := runnable.Invoke(ctx, document.Source{URI: path})
-	if err != nil {
-		log.Printf("索引群文件 %s 失败: %v", fileName, err)
-		return fmt.Sprintf("群文件 %s 索引失败: %v", fileName, err)
-	}
-
-	log.Printf("群文件 %s 索引完成，写入 %d 条记录", fileName, len(ids))
-	return fmt.Sprintf("群文件 %s 已完成索引，写入 %d 条记录。", fileName, len(ids))
-}
-
-func downloadGroupFile(ctx context.Context, fileName, fileURL string, fileSize int64) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
-	if err != nil {
-		return "", err
-	}
-	adapter.SetBearerAuthHeader(req, napCatAccessToken)
-
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("下载地址返回状态码 %d", resp.StatusCode)
-	}
-
-	ext := filepath.Ext(fileName)
-	tmp, err := os.CreateTemp("", "qqqai-upload-*"+ext)
-	if err != nil {
-		return "", err
-	}
-	path := tmp.Name()
-	success := false
-	defer func() {
-		tmp.Close()
-		if !success {
-			os.Remove(path)
+	if indexerURL := config.GetIndexerURL(); indexerURL != "" {
+		client := groupfile.NewClient(indexerURL, time.Duration(config.GetIndexerTimeout())*time.Second)
+		result, err := client.Index(ctx, req)
+		if err != nil {
+			log.Printf("调用群文件索引服务失败: %v", err)
+			return groupfile.ReplyForError(req, err)
 		}
-	}()
-
-	reader := resp.Body
-	if fileSize > 0 {
-		reader = io.NopCloser(io.LimitReader(resp.Body, fileSize+1))
+		return result.Message
 	}
-	written, err := io.Copy(tmp, reader)
+
+	result, err := groupfile.Index(ctx, req)
 	if err != nil {
-		return "", err
+		log.Printf("群文件索引失败: %v", err)
+		return groupfile.ReplyForError(req, err)
 	}
-	if fileSize > 0 && written > fileSize {
-		return "", fmt.Errorf("下载内容超过事件声明大小")
-	}
-
-	success = true
-	return path, nil
+	return result.Message
 }
 
 func sendReply(conn *websocket.Conn, event *adapter.Event, reply string, privateReply bool, writeTimeout time.Duration, writeMu *sync.Mutex) {

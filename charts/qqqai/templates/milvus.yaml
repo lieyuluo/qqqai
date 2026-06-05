@@ -1,0 +1,83 @@
+{{- if .Values.milvus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "qqqai.fullname" . }}-milvus
+  labels:
+    {{- include "qqqai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus
+spec:
+  selector:
+    {{- include "qqqai.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus
+  ports:
+    - name: grpc
+      port: 19530
+      targetPort: grpc
+    - name: metrics
+      port: 9091
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "qqqai.fullname" . }}-milvus
+  labels:
+    {{- include "qqqai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: milvus
+spec:
+  serviceName: {{ include "qqqai.fullname" . }}-milvus
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "qqqai.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: milvus
+  template:
+    metadata:
+      labels:
+        {{- include "qqqai.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: milvus
+    spec:
+      containers:
+        - name: milvus
+          image: {{ .Values.milvus.image | quote }}
+          command:
+            - milvus
+            - run
+            - standalone
+          env:
+            - name: ETCD_ENDPOINTS
+              value: {{ include "qqqai.fullname" . }}-etcd:2379
+            - name: MINIO_ADDRESS
+              value: {{ include "qqqai.fullname" . }}-minio:9000
+            - name: MINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "qqqai.fullname" . }}-secret
+                  key: MINIO_ROOT_USER
+            - name: MINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "qqqai.fullname" . }}-secret
+                  key: MINIO_ROOT_PASSWORD
+          ports:
+            - name: grpc
+              containerPort: 19530
+            - name: metrics
+              containerPort: 9091
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/milvus
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        {{- if .Values.milvus.persistence.storageClassName }}
+        storageClassName: {{ .Values.milvus.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.milvus.persistence.size | quote }}
+{{- end }}

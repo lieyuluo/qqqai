@@ -1,0 +1,6 @@
+apiVersion: v2
+name: qqqai
+description: Cloud-neutral Kubernetes and Knative deployment for qqqai.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

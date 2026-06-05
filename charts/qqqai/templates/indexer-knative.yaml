@@ -1,0 +1,47 @@
+{{- if .Values.indexer.enabled }}
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ include "qqqai.fullname" . }}-indexer
+  labels:
+    {{- include "qqqai.labels" . | nindent 4 }}
+    app.kubernetes.io/component: indexer
+    networking.knative.dev/visibility: cluster-local
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: {{ .Values.indexer.minScale | quote }}
+        autoscaling.knative.dev/max-scale: {{ .Values.indexer.maxScale | quote }}
+    spec:
+      containerConcurrency: {{ .Values.indexer.containerConcurrency }}
+      timeoutSeconds: {{ .Values.indexer.timeoutSeconds }}
+      containers:
+        - image: {{ include "qqqai.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - indexer
+          ports:
+            - containerPort: {{ .Values.app.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "qqqai.fullname" . }}-config
+            - secretRef:
+                name: {{ include "qqqai.fullname" . }}-secret
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.app.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.app.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.indexer.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

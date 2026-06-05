@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"qqqai/ai"
 	"qqqai/config"
 	"qqqai/flow"
@@ -14,14 +16,18 @@ import (
 	"qqqai/rag/rag_tools/indexer"
 	"qqqai/rag/rag_tools/retriever"
 	"qqqai/tool/document"
+	"qqqai/tool/groupfile"
 	"qqqai/tool/memory"
 	"qqqai/tool/sql_tools"
 	"qqqai/tool/storage"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+var ready atomic.Bool
 
 // 全局 WebSocket 升级器
 var upgrader = websocket.Upgrader{
@@ -78,7 +84,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func initBotDataPipeline(ctx context.Context) error {
+func initIndexingPipeline(ctx context.Context) error {
 	var err error
 	if db.Milvus == nil {
 		db.Milvus, err = db.NewMilvus(ctx)
@@ -109,11 +115,20 @@ func initBotDataPipeline(ctx context.Context) error {
 	}
 
 	indexer.NewIndexer()
-	retriever.NewRetriever()
 
 	if err := rag_flow.InitIndexingGraph(ctx); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+func initBotDataPipeline(ctx context.Context) error {
+	if err := initIndexingPipeline(ctx); err != nil {
+		return err
+	}
+
+	retriever.NewRetriever()
 
 	taskModel, err := chat_model.GetChatModel(ctx, config.GlobalConfig.ChatModelType)
 	if err != nil {
@@ -132,6 +147,10 @@ func initBotDataPipeline(ctx context.Context) error {
 		return err
 	}
 
+	if err := storage.InitRedis(ctx); err != nil {
+		return err
+	}
+
 	if err := flow.InitFinalGraph(ctx, storage.NewRedisCheckPointStore()); err != nil {
 		return err
 	}
@@ -140,26 +159,84 @@ func initBotDataPipeline(ctx context.Context) error {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	configPath := ".env"
 	_, err := config.LoadConfig(configPath)
 	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
+		return fmt.Errorf("加载配置失败: %w", err)
 	}
 
 	ctx := context.Background()
-	if err := initBotDataPipeline(ctx); err != nil {
-		log.Fatalf("初始化 QQBot 数据处理流程失败: %v", err)
+	switch appMode() {
+	case "server":
+		return runServer(ctx)
+	case "indexer":
+		return runIndexer(ctx)
+	default:
+		return fmt.Errorf("未知启动模式 %q，可用模式: server, indexer", appMode())
 	}
+}
 
-	// 注册路由
-	http.HandleFunc("/ws", wsEndpoint)
+func appMode() string {
+	if mode := os.Getenv("QQQAI_MODE"); mode != "" {
+		return mode
+	}
+	if mode := os.Getenv("APP_MODE"); mode != "" {
+		return mode
+	}
+	if len(os.Args) > 1 {
+		return os.Args[1]
+	}
+	return "server"
+}
 
-	// 启动服务器
+func runServer(ctx context.Context) error {
+	if err := initBotDataPipeline(ctx); err != nil {
+		return fmt.Errorf("初始化 QQBot 数据处理流程失败: %w", err)
+	}
+	ready.Store(true)
+
+	mux := http.NewServeMux()
+	registerProbeHandlers(mux)
+	mux.HandleFunc("/ws", wsEndpoint)
+
 	port := config.GetPort()
 	log.Printf("机器人 QQ 号: %d", config.GetBotQQ())
+	log.Printf("qqqai server listening on %s", port)
+	return http.ListenAndServe(port, mux)
+}
 
-	err = http.ListenAndServe(port, nil)
-	if err != nil {
-		log.Fatalf("启动 HTTP 服务器失败: %v", err)
+func runIndexer(ctx context.Context) error {
+	if err := initIndexingPipeline(ctx); err != nil {
+		return fmt.Errorf("初始化群文件索引流程失败: %w", err)
 	}
+	ready.Store(true)
+
+	mux := http.NewServeMux()
+	registerProbeHandlers(mux)
+	groupfile.RegisterHandlers(mux)
+
+	port := config.GetPort()
+	log.Printf("qqqai indexer listening on %s", port)
+	return http.ListenAndServe(port, mux)
+}
+
+func registerProbeHandlers(mux *http.ServeMux) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
+	})
 }

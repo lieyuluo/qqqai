@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "qqqai.fullname" . }}-config
+  labels:
+    {{- include "qqqai.labels" . | nindent 4 }}
+data:
+  BOT_PORT: {{ .Values.app.port | quote }}
+  CHAT_MODEL_TYPE: {{ .Values.config.chatModelType | quote }}
+  INTENT_MODEL_TYPE: {{ .Values.config.intentModelType | quote }}
+  EMBEDDING_MODEL_TYPE: {{ .Values.config.embeddingModelType | quote }}
+  LLM_PERSONA: {{ .Values.config.llmPersona | quote }}
+  SESSION_MAX_MESSAGES: {{ .Values.config.sessionMaxMessages | quote }}
+  MEMORY_DIR: {{ .Values.app.memoryDir | quote }}
+  MEMORY_SUMMARY_INTERVAL: {{ .Values.config.memorySummaryInterval | quote }}
+  MEMORY_MAX_ENTRIES: {{ .Values.config.memoryMaxEntries | quote }}
+  WEBSOCKET_ALLOWED_ORIGINS: {{ .Values.app.allowedOrigins | quote }}
+  WEBSOCKET_READ_TIMEOUT: {{ .Values.app.readTimeout | quote }}
+  WEBSOCKET_WRITE_TIMEOUT: {{ .Values.app.writeTimeout | quote }}
+  INDEXER_URL: {{ include "qqqai.indexerURL" . | quote }}
+  INDEXER_TIMEOUT_SECONDS: {{ .Values.indexer.timeoutSeconds | quote }}
+  NAPCAT_HTTP_BASE_URL: {{ .Values.config.napcatHTTPBaseURL | quote }}
+  ARK_CHAT_MODEL: {{ .Values.config.arkChatModel | quote }}
+  ARK_EMBEDDING_MODEL: {{ .Values.config.arkEmbeddingModel | quote }}
+  DEEPSEEK_CHAT_MODEL: {{ .Values.config.deepseekChatModel | quote }}
+  DEEPSEEK_BASE_URL: {{ .Values.config.deepseekBaseURL | quote }}
+  QWEN_EMBEDDING: {{ .Values.config.qwenEmbedding | quote }}
+  QWEN_BASE_URL: {{ .Values.config.qwenBaseURL | quote }}
+  LANGSMITH_API_URL: {{ .Values.config.langsmithAPIURL | quote }}
+  MYSQL_HOST: {{ include "qqqai.fullname" . }}-mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: {{ .Values.mysql.database | quote }}
+  REDIS_ADDR: {{ include "qqqai.fullname" . }}-redis:6379
+  REDIS_DB: {{ .Values.redis.db | quote }}
+  MILVUS_ADDR: {{ include "qqqai.fullname" . }}-milvus:19530
+  MILVUS_COLLECTION_NAME: {{ .Values.config.milvusCollectionName | quote }}
+  MILVUS_TOP_K: {{ .Values.config.milvusTopK | quote }}
+  ELASTICSEARCH_ADDRESSES: http://{{ include "qqqai.fullname" . }}-elasticsearch:9200
+  ELASTICSEARCH_INDEX: {{ .Values.config.elasticsearchIndex | quote }}

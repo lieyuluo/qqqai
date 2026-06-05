@@ -36,4 +36,4 @@ USER app
 
 EXPOSE 8080
 
-CMD ["./qqqai"]
+CMD ["./qqqai", "server"]
