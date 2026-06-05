@@ -2,11 +2,13 @@ package flow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"qqqai/ai"
 	"qqqai/config"
 	"qqqai/model/chat_model"
 	"qqqai/tool"
+	"qqqai/tool/analyst_tools"
 	"qqqai/tool/sql_tools"
 	"strings"
 	"sync"
@@ -24,15 +26,17 @@ type FinalGraphRequest struct {
 }
 
 const (
-	Trans_List   = "Trans_List"
-	Intent_Model = "Intent_Model"
-	React        = "React"
-	RAGChat      = "RAGChat"
-	Chat         = "Chat"
-	ChatToEnd    = "ChatToEnd"
-	RAGToEnd     = "RAGToEnd"
-	ToToolCall   = "ToToolCall"
-	MCP          = "MCP"
+	Trans_List    = "Trans_List"
+	Intent_Model  = "Intent_Model"
+	React         = "React"
+	RAGChat       = "RAGChat"
+	Chat          = "Chat"
+	ChatToEnd     = "ChatToEnd"
+	RAGToEnd      = "RAGToEnd"
+	ToToolCall    = "ToToolCall"
+	MCP           = "MCP"
+	AnalystGraph  = "AnalystGraph"
+	AnalysisToEnd = "AnalysisToEnd"
 )
 
 func init() {
@@ -166,6 +170,36 @@ Chat：
 	_ = g.AddLambdaNode(ChatToEnd, compose.InvokableLambda(tool.MsgToMsgs))
 	_ = g.AddLambdaNode(RAGToEnd, compose.InvokableLambda(tool.MsgToMsgs))
 	_ = g.AddLambdaNode(Trans_List, compose.InvokableLambda(tool.MsgToMsgs))
+	_ = g.AddLambdaNode(AnalysisToEnd, compose.InvokableLambda(func(ctx context.Context, input *analyst_tools.AnalysisResult) ([]*schema.Message, error) {
+		if input == nil {
+			return []*schema.Message{schema.AssistantMessage("数据分析完成，但未生成可用的分析结果。", nil)}, nil
+		}
+
+		formatJSON := func(value any) string {
+			data, err := json.MarshalIndent(value, "", "  ")
+			if err != nil {
+				return fmt.Sprintf("%v", value)
+			}
+			return string(data)
+		}
+
+		parts := make([]string, 0, 3)
+		if textAnalysis := strings.TrimSpace(input.TextAnalysis); textAnalysis != "" {
+			parts = append(parts, "分析报告:\n"+textAnalysis)
+		}
+		if input.Statistics != nil {
+			parts = append(parts, "统计结果:\n"+formatJSON(input.Statistics))
+		}
+		if input.ChartConfig != nil {
+			parts = append(parts, "图表配置:\n"+formatJSON(input.ChartConfig))
+		}
+
+		if len(parts) == 0 {
+			parts = append(parts, "数据分析完成，但分析报告、统计结果和图表配置均为空。")
+		}
+
+		return []*schema.Message{schema.AssistantMessage(strings.Join(parts, "\n\n"), nil)}, nil
+	}))
 
 	_ = g.AddBranch(Trans_List, compose.NewGraphBranch(func(ctx context.Context, input []*schema.Message) (endNode string, err error) {
 		if len(input) == 0 {
@@ -206,12 +240,20 @@ Chat：
 	}
 	_ = g.AddToolsNode(MCP, mcpTool)
 
+	analystGraph, err := BuildAnalystGraph(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("构建 AnalystGraph 子图失败: %w", err)
+	}
+	_ = g.AddGraphNode(AnalystGraph, analystGraph)
+
 	_ = g.AddEdge(compose.START, Intent_Model)
 	_ = g.AddEdge(Intent_Model, Trans_List)
 
 	_ = g.AddEdge(React, ToToolCall)
 	_ = g.AddEdge(ToToolCall, MCP)
-	_ = g.AddEdge(MCP, compose.END)
+	_ = g.AddEdge(MCP, AnalystGraph)
+	_ = g.AddEdge(AnalystGraph, AnalysisToEnd)
+	_ = g.AddEdge(AnalysisToEnd, compose.END)
 
 	_ = g.AddEdge(RAGChat, RAGToEnd)
 	_ = g.AddEdge(RAGToEnd, compose.END)
