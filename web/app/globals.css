@@ -1,0 +1,283 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #f7f7f4;
+  color: #1f2420;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+}
+
+.nav {
+  border-right: 1px solid #deded6;
+  background: #ffffff;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.brand {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 18px;
+}
+
+.nav a,
+.nav button {
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  color: #333930;
+  background: transparent;
+}
+
+.nav a:hover,
+.nav button:hover {
+  background: #edf3e8;
+}
+
+.main {
+  min-width: 0;
+  padding: 24px;
+}
+
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.panel {
+  width: min(100%, 420px);
+  background: #ffffff;
+  border: 1px solid #deded6;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.panel h1,
+.main h1 {
+  margin: 0 0 18px;
+  font-size: 24px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.field label {
+  font-size: 13px;
+  color: #5f665b;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  border: 1px solid #cfd1c9;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  color: #1f2420;
+}
+
+.textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.btn {
+  height: 40px;
+  border-radius: 8px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #2f6f4e;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.btn.secondary {
+  background: #ebe8df;
+  color: #2a2d28;
+}
+
+.btn.danger {
+  background: #b13c32;
+}
+
+.error {
+  color: #b13c32;
+  min-height: 22px;
+  font-size: 14px;
+}
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 18px;
+  height: calc(100vh - 48px);
+}
+
+.sidebar,
+.workspace {
+  min-height: 0;
+  background: #ffffff;
+  border: 1px solid #deded6;
+  border-radius: 8px;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+}
+
+.conversation {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+  color: #333930;
+}
+
+.conversation.active,
+.conversation:hover {
+  background: #edf3e8;
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  overflow: hidden;
+}
+
+.messages {
+  overflow: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.bubble {
+  max-width: min(760px, 86%);
+  border-radius: 8px;
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.bubble.user {
+  align-self: flex-end;
+  background: #2f6f4e;
+  color: #ffffff;
+}
+
+.bubble.assistant {
+  align-self: flex-start;
+  background: #f0eee8;
+}
+
+.composer {
+  border-top: 1px solid #deded6;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  border: 1px solid #deded6;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 12px;
+  border-bottom: 1px solid #ebebe5;
+  font-size: 14px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  background: #ffffff;
+  border: 1px solid #deded6;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.stat strong {
+  display: block;
+  font-size: 28px;
+}
+
+@media (max-width: 760px) {
+  .shell,
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    border-right: 0;
+    border-bottom: 1px solid #deded6;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .brand {
+    width: 100%;
+    margin-bottom: 4px;
+  }
+
+  .chat-layout {
+    height: auto;
+  }
+}

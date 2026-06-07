@@ -439,6 +439,79 @@ log.Printf("[FinalGraph] route selected: query=%q, intent=%q, route=%s", query, 
 - [ ] 群文件索引支持更多格式
 - [ ] 管理后台：查看知识库、会话、索引状态
 - [ ] SQL 执行权限控制与审计
+
+---
+
+## GoFrame Web API + Next.js Web Console
+
+本仓库现在保留原有 NapCat / OneBot `/ws` 接入，同时新增 GoFrame Web API 层和独立 `web/` Next.js 前端。QQ 端和 Web 端都会通过 `internal/service.ChatService` 进入同一套 Eino `FinalGraph`，因此普通聊天、RAG、SQL 路由能力保持一致。
+
+### 新增能力
+
+- GoFrame Server：启动后同时提供 `/ws` 和 `/api/*`。
+- JWT 认证：`POST /api/auth/register`、`POST /api/auth/login`、`GET /api/auth/me`。
+- Web 会话与消息持久化：`conversations` / `messages` 表保存 Web 聊天记录。
+- Web Chat：`POST /api/chat` 同步返回，`POST /api/chat/stream` 伪流式 SSE 输出，支持请求 context 取消。
+- 文件上传：`POST /api/files/upload` 保存到本地 `uploads/`，并提交异步 RAG 索引任务。
+- RAG 文件索引 Worker：使用 goroutine + channel worker pool 调用 `rag_flow.GetIndexingGraph()`，更新 `files.status`。
+- SQL 安全接口：`/api/sql/generate` 只生成 SQL；`/api/sql/execute` 需要 `confirm=true`，且仅允许单条安全 `SELECT`。
+- Admin API：`/api/admin/stats`、`/api/admin/users`、`/api/admin/conversations`、`/api/admin/files`。
+- Next.js 前端：登录、注册、聊天、会话列表、流式输出、文件上传、管理员统计。
+
+### 数据库初始化
+
+先创建 MySQL 数据库，然后执行：
+
+```bash
+mysql -h 127.0.0.1 -P 3306 -u root -p qqqai < manifest/schema.sql
+```
+
+管理员账号由 `.env` 中的 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 在后端启动时自动创建或更新。
+
+### 后端运行
+
+```bash
+cp .env.example .env
+go run .
+```
+
+后端默认监听 `BOT_PORT=8080`。OneBot 仍连接：
+
+```text
+ws://127.0.0.1:8080/ws
+```
+
+Web API 默认地址：
+
+```text
+http://127.0.0.1:8080/api
+```
+
+### 前端运行
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+前端默认读取：
+
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
+```
+
+然后打开：
+
+```text
+http://localhost:3000
+```
+
+### 并发设计
+
+- `ChatTaskPool` 使用固定数量 goroutine 从 channel 消费聊天任务，QQ 端和 Web 同步聊天都复用 `ChatService`。
+- `FileIndexWorker` 使用独立 worker pool 异步处理上传文件索引，单个文件失败只更新该文件状态，不阻塞上传接口和其他任务。
+- SSE 接口在写入每个 chunk 前检查 request context；客户端断开后停止写入并结束 handler。
 - [ ] 多群隔离知识库
 - [ ] 支持插件化 MCP 工具注册
 - [ ] 支持流式回复

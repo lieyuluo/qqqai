@@ -29,7 +29,7 @@ WORKDIR /app
 
 COPY --from=builder /out/qqqai ./qqqai
 
-RUN mkdir -p /app/data/memory /app/tmp \
+RUN mkdir -p /app/data/memory /app/data/uploads /app/tmp \
     && chown -R app:app /app
 
 USER app

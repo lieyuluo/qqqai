@@ -11,18 +11,24 @@ import (
 	"qqqai/adapter"
 	"qqqai/ai"
 	"qqqai/config"
-	"qqqai/flow"
+	"qqqai/internal/service"
+	"qqqai/internal/worker"
 	"qqqai/rag/rag_flow"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/components/document"
-	"github.com/cloudwego/eino/schema"
 	"github.com/gorilla/websocket"
 )
 
 const napCatAccessToken = "yAEsax.~ofNwpFDk"
+
+var chatTaskPool *worker.ChatTaskPool
+
+func SetChatTaskPool(pool *worker.ChatTaskPool) {
+	chatTaskPool = pool
+}
 
 // HandleWSMessage 处理 WebSocket 接收到的事件和 AI 引擎
 func HandleWSMessage(conn *websocket.Conn, message []byte, botQQ int64, writeTimeout time.Duration, writeMu *sync.Mutex) {
@@ -46,14 +52,10 @@ func HandleWSMessage(conn *websocket.Conn, message []byte, botQQ int64, writeTim
 
 		log.Printf("收到用户 %d 的消息: %s", event.UserID, requestText)
 
-		reply, err := generateGraphReply(ctx, sessionID, requestText)
+		reply, err := generateChatReply(ctx, sessionID, requestText)
 		if err != nil {
-			log.Printf("总控图生成回复失败，回退普通聊天: %v", err)
-			reply, err = ai.GenerateReply(ctx, sessionID, requestText)
-			if err != nil {
-				log.Printf("生成回复失败: %v", err)
-				return
-			}
+			log.Printf("生成回复失败: %v", err)
+			return
 		}
 
 		log.Printf("生成回复成功: %s", reply)
@@ -234,38 +236,18 @@ func sendReply(conn *websocket.Conn, event *adapter.Event, reply string, private
 	log.Printf("回复消息发送成功")
 }
 
-func generateGraphReply(ctx context.Context, sessionID, cleanText string) (string, error) {
-	runnable, err := flow.GetFinalGraph()
+func generateChatReply(ctx context.Context, sessionID, cleanText string) (string, error) {
+	req := service.ChatRequest{SessionID: sessionID, Query: cleanText}
+	if chatTaskPool != nil {
+		resp, err := chatTaskPool.Submit(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		return resp.Reply, nil
+	}
+	resp, err := service.NewChatService().Chat(ctx, req)
 	if err != nil {
 		return "", err
 	}
-
-	ctx = context.WithValue(ctx, "session_id", sessionID)
-	messages, err := runnable.Invoke(ctx, flow.FinalGraphRequest{
-		Query:     cleanText,
-		SessionID: sessionID,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	reply := messagesToReply(messages)
-	if reply == "" {
-		return "", fmt.Errorf("总控图返回空回复")
-	}
-	return reply, nil
-}
-
-func messagesToReply(messages []*schema.Message) string {
-	parts := make([]string, 0, len(messages))
-	for _, msg := range messages {
-		if msg == nil {
-			continue
-		}
-		content := strings.TrimSpace(msg.Content)
-		if content != "" {
-			parts = append(parts, content)
-		}
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+	return resp.Reply, nil
 }

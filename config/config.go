@@ -16,6 +16,7 @@ type Config struct {
 	Session            SessionConfig       `yaml:"session"`
 	Websocket          WebsocketConfig     `yaml:"websocket"`
 	Memory             MemoryConfig        `yaml:"memory"`
+	Web                WebConfig           `yaml:"web"`
 	ChatModelType      string              `yaml:"chat_model_type"`
 	IntentModelType    string              `yaml:"intent_model_type"`
 	EmbeddingModelType string              `yaml:"embedding_model_type"`
@@ -116,6 +117,20 @@ type MemoryConfig struct {
 	MaxEntries      int    `yaml:"max_entries"`
 }
 
+type WebConfig struct {
+	JWTSecret            string   `yaml:"jwt_secret"`
+	JWTExpireHours       int      `yaml:"jwt_expire_hours"`
+	AdminEmail           string   `yaml:"admin_email"`
+	AdminPassword        string   `yaml:"admin_password"`
+	UploadDir            string   `yaml:"upload_dir"`
+	CORSAllowedOrigins   []string `yaml:"cors_allowed_origins"`
+	ChatWorkerCount      int      `yaml:"chat_worker_count"`
+	ChatQueueSize        int      `yaml:"chat_queue_size"`
+	FileIndexWorkerCount int      `yaml:"file_index_worker_count"`
+	FileIndexQueueSize   int      `yaml:"file_index_queue_size"`
+	SQLMaxRows           int      `yaml:"sql_max_rows"`
+}
+
 var (
 	// 全局配置实例
 	GlobalConfig *Config
@@ -202,6 +217,11 @@ func applyEnvOverrides(config *Config) {
 	setString(&config.ESConf.Password, "ELASTICSEARCH_PASSWORD")
 	setString(&config.ESConf.Index, "ELASTICSEARCH_INDEX")
 	setString(&config.Memory.Dir, "MEMORY_DIR")
+	setString(&config.Web.JWTSecret, "JWT_SECRET")
+	setInt(&config.Web.JWTExpireHours, "JWT_EXPIRE_HOURS")
+	setString(&config.Web.AdminEmail, "ADMIN_EMAIL")
+	setString(&config.Web.AdminPassword, "ADMIN_PASSWORD")
+	setString(&config.Web.UploadDir, "UPLOAD_DIR")
 
 	if addresses := os.Getenv("ELASTICSEARCH_ADDRESSES"); addresses != "" {
 		config.ESConf.Addresses = splitComma(addresses)
@@ -209,11 +229,19 @@ func applyEnvOverrides(config *Config) {
 	if allowedOrigins := os.Getenv("WEBSOCKET_ALLOWED_ORIGINS"); allowedOrigins != "" {
 		config.Websocket.AllowedOrigins = splitComma(allowedOrigins)
 	}
+	if allowedOrigins := os.Getenv("CORS_ALLOWED_ORIGINS"); allowedOrigins != "" {
+		config.Web.CORSAllowedOrigins = splitComma(allowedOrigins)
+	}
 	setInt(&config.Session.MaxMessages, "SESSION_MAX_MESSAGES")
 	setInt(&config.Memory.SummaryInterval, "MEMORY_SUMMARY_INTERVAL")
 	setInt(&config.Memory.MaxEntries, "MEMORY_MAX_ENTRIES")
 	setInt(&config.Websocket.ReadTimeout, "WEBSOCKET_READ_TIMEOUT")
 	setInt(&config.Websocket.WriteTimeout, "WEBSOCKET_WRITE_TIMEOUT")
+	setInt(&config.Web.ChatWorkerCount, "CHAT_WORKER_COUNT")
+	setInt(&config.Web.ChatQueueSize, "CHAT_QUEUE_SIZE")
+	setInt(&config.Web.FileIndexWorkerCount, "FILE_INDEX_WORKER_COUNT")
+	setInt(&config.Web.FileIndexQueueSize, "FILE_INDEX_QUEUE_SIZE")
+	setInt(&config.Web.SQLMaxRows, "SQL_MAX_ROWS")
 }
 
 func splitComma(value string) []string {
@@ -252,6 +280,33 @@ func applyDefaults(config *Config) {
 	}
 	if config.Memory.MaxEntries == 0 {
 		config.Memory.MaxEntries = 20
+	}
+	if config.Web.JWTSecret == "" {
+		config.Web.JWTSecret = "change-me-in-production"
+	}
+	if config.Web.JWTExpireHours == 0 {
+		config.Web.JWTExpireHours = 168
+	}
+	if config.Web.UploadDir == "" {
+		config.Web.UploadDir = "uploads"
+	}
+	if len(config.Web.CORSAllowedOrigins) == 0 {
+		config.Web.CORSAllowedOrigins = []string{"*"}
+	}
+	if config.Web.ChatWorkerCount == 0 {
+		config.Web.ChatWorkerCount = 4
+	}
+	if config.Web.ChatQueueSize == 0 {
+		config.Web.ChatQueueSize = 64
+	}
+	if config.Web.FileIndexWorkerCount == 0 {
+		config.Web.FileIndexWorkerCount = 2
+	}
+	if config.Web.FileIndexQueueSize == 0 {
+		config.Web.FileIndexQueueSize = 32
+	}
+	if config.Web.SQLMaxRows == 0 {
+		config.Web.SQLMaxRows = 100
 	}
 	if config.ChatModelType == "" {
 		config.ChatModelType = "deepseek"
@@ -350,4 +405,67 @@ func GetNapCatHTTPBaseURL() string {
 		return "http://127.0.0.1:3000"
 	}
 	return strings.TrimRight(strings.TrimSpace(GlobalConfig.NapCatConf.HTTPBaseURL), "/")
+}
+
+func GetCORSAllowedOrigins() []string {
+	if GlobalConfig == nil || len(GlobalConfig.Web.CORSAllowedOrigins) == 0 {
+		return []string{"*"}
+	}
+	return GlobalConfig.Web.CORSAllowedOrigins
+}
+
+func GetUploadDir() string {
+	if GlobalConfig == nil || strings.TrimSpace(GlobalConfig.Web.UploadDir) == "" {
+		return "uploads"
+	}
+	return strings.TrimSpace(GlobalConfig.Web.UploadDir)
+}
+
+func GetJWTSecret() string {
+	if GlobalConfig == nil || strings.TrimSpace(GlobalConfig.Web.JWTSecret) == "" {
+		return "change-me-in-production"
+	}
+	return GlobalConfig.Web.JWTSecret
+}
+
+func GetJWTExpireHours() int {
+	if GlobalConfig == nil || GlobalConfig.Web.JWTExpireHours <= 0 {
+		return 168
+	}
+	return GlobalConfig.Web.JWTExpireHours
+}
+
+func GetChatWorkerCount() int {
+	if GlobalConfig == nil || GlobalConfig.Web.ChatWorkerCount <= 0 {
+		return 4
+	}
+	return GlobalConfig.Web.ChatWorkerCount
+}
+
+func GetChatQueueSize() int {
+	if GlobalConfig == nil || GlobalConfig.Web.ChatQueueSize <= 0 {
+		return 64
+	}
+	return GlobalConfig.Web.ChatQueueSize
+}
+
+func GetFileIndexWorkerCount() int {
+	if GlobalConfig == nil || GlobalConfig.Web.FileIndexWorkerCount <= 0 {
+		return 2
+	}
+	return GlobalConfig.Web.FileIndexWorkerCount
+}
+
+func GetFileIndexQueueSize() int {
+	if GlobalConfig == nil || GlobalConfig.Web.FileIndexQueueSize <= 0 {
+		return 32
+	}
+	return GlobalConfig.Web.FileIndexQueueSize
+}
+
+func GetSQLMaxRows() int {
+	if GlobalConfig == nil || GlobalConfig.Web.SQLMaxRows <= 0 {
+		return 100
+	}
+	return GlobalConfig.Web.SQLMaxRows
 }

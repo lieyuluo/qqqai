@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"qqqai/ai"
 	"qqqai/config"
 	"qqqai/flow"
 	"qqqai/handler"
+	"qqqai/internal/controller"
+	"qqqai/internal/dao"
+	"qqqai/internal/service"
+	localstorage "qqqai/internal/storage"
+	"qqqai/internal/worker"
 	"qqqai/model/chat_model"
 	"qqqai/rag/rag_flow"
 	"qqqai/rag/rag_tools/db"
@@ -20,37 +24,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogf/gf/v2/frame/g"
+	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gorilla/websocket"
 )
 
-// 全局 WebSocket 升级器
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		// 从配置获取允许的 Origin 列表
-		allowedOrigins := config.GetAllowedOrigins()
-		origin := r.Header.Get("Origin")
-
-		// 如果允许所有来源
-		for _, allowedOrigin := range allowedOrigins {
-			if allowedOrigin == "*" || allowedOrigin == origin {
-				return true
-			}
-		}
-
-		return false
-	},
-}
-
-// wsEndpoint 处理 WebSocket upgrade，并在 for 循环中读取消息
-func wsEndpoint(w http.ResponseWriter, r *http.Request) {
-	// 升级 HTTP 连接为 WebSocket 连接
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket 升级失败: %v", err)
-		return
-	}
-	defer conn.Close()
-
+func serveWSConn(conn *websocket.Conn) {
 	readTimeout := time.Duration(config.GetReadTimeout()) * time.Second
 	writeTimeout := time.Duration(config.GetWriteTimeout()) * time.Second
 	writeMu := &sync.Mutex{}
@@ -76,6 +55,17 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 			handler.HandleWSMessage(conn, message, config.GetBotQQ(), writeTimeout, writeMu)
 		}
 	}
+}
+
+// wsEndpoint keeps the original /ws OneBot route semantics on GoFrame.
+func wsEndpoint(r *ghttp.Request) {
+	ws, err := r.WebSocket()
+	if err != nil {
+		log.Printf("WebSocket 升级失败: %v", err)
+		return
+	}
+	defer ws.Close()
+	serveWSConn(ws.Conn)
 }
 
 func initBotDataPipeline(ctx context.Context) error {
@@ -151,15 +141,44 @@ func main() {
 		log.Fatalf("初始化 QQBot 数据处理流程失败: %v", err)
 	}
 
-	// 注册路由
-	http.HandleFunc("/ws", wsEndpoint)
+	if err := dao.Init(ctx); err != nil {
+		log.Fatalf("初始化 MySQL 连接失败: %v", err)
+	}
+	defer dao.Close()
 
-	// 启动服务器
+	if err := service.EnsureAdmin(ctx); err != nil {
+		log.Fatalf("初始化管理员失败: %v", err)
+	}
+	if err := controller.EnsureUploadDir(config.GetUploadDir()); err != nil {
+		log.Fatalf("创建上传目录失败: %v", err)
+	}
+
+	appCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	chatService := service.NewChatService()
+	chatPool := worker.NewChatTaskPool(chatService, config.GetChatWorkerCount(), config.GetChatQueueSize())
+	defer chatPool.Close()
+	handler.SetChatTaskPool(chatPool)
+
+	fileWorker := worker.NewFileIndexWorker(appCtx, config.GetFileIndexWorkerCount(), config.GetFileIndexQueueSize())
+	defer fileWorker.Close()
+
+	app := controller.NewApp(
+		service.NewAuthService(),
+		chatService,
+		service.NewSQLService(),
+		chatPool,
+		fileWorker,
+		localstorage.NewLocalStorage(config.GetUploadDir()),
+	)
+
+	server := g.Server()
+	server.SetAddr(config.GetPort())
+	server.SetDumpRouterMap(false)
+	controller.RegisterRoutes(server, app, wsEndpoint)
+
 	port := config.GetPort()
 	log.Printf("机器人 QQ 号: %d", config.GetBotQQ())
-
-	err = http.ListenAndServe(port, nil)
-	if err != nil {
-		log.Fatalf("启动 HTTP 服务器失败: %v", err)
-	}
+	log.Printf("GoFrame Server listening on %s", port)
+	server.Run()
 }
