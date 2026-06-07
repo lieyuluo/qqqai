@@ -1,493 +1,122 @@
-# QQQAI — 面向 QQ 场景的智能 Agent Bot
+# QQQAI
 
-> 一个基于 **Go + Eino Graph + NapCat OneBot** 构建的 QQ 智能机器人。  
-> 它不只是“能聊天”，而是能够在 **普通对话、文件知识库问答、专业数据分析 SQL 查询** 之间自动切换的多能力 Agent。
+QQQAI 是一个基于 Go、GoFrame、CloudWeGo Eino、RAG 和 OneBot 的多端智能 Agent 项目。它同时支持 QQ OneBot 机器人接入和 Web 聊天控制台，Web 端与 QQ 端复用同一套 `ChatService` 和 Eino `FinalGraph`，让普通聊天、RAG 文件问答、SQL 生成与安全执行都走统一的核心能力。
 
-![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go)
-![Eino](https://img.shields.io/badge/Eino-Graph%20Workflow-7B61FF?style=flat-square)
-![NapCat](https://img.shields.io/badge/NapCat-OneBot-FFB000?style=flat-square)
-![RAG](https://img.shields.io/badge/RAG-Milvus%20%2B%20ES-22C55E?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
+## 1. 项目定位
 
----
+QQQAI 的定位是一个可扩展的多端 AI 助手系统：
 
-## ✨ 项目亮点
+- QQ 场景：通过 NapCat / OneBot WebSocket 接入 QQ 群聊和私聊，保留原有 `/ws` 能力。
+- Web 场景：通过 GoFrame Web API + Next.js 前端提供登录、会话、聊天、文件上传、RAG 索引、SQL 工具和管理员统计。
+- Agent 核心：通过 CloudWeGo Eino `FinalGraph` 在普通聊天、RAG、SQL 分析之间自动路由。
+- 高并发执行：通过 goroutine、channel、worker pool 控制多用户 AI 请求和文件索引任务。
 
-QQQAI 是一个为 QQ 群聊 / 私聊设计的智能机器人项目，核心目标是：
+项目重点不是简单聊天，而是把 QQ Bot、Web Chat、RAG、SQL、安全执行和异步任务调度整合成一个统一后端。
 
-- **普通聊天**：直接基于短期记忆进行自然回复；
-- **文件问答**：自动索引群文件，结合知识库进行 RAG 问答；
-- **数据分析**：识别统计、报表、数据库类问题，自动生成 SQL 并通过 MCP 执行；
-- **意图分流**：通过意图模型判断问题类型，把请求送到最合适的处理链路；
-- **图式编排**：使用 CloudWeGo Eino 的 `compose.Graph` 构建清晰、可扩展的 Agent 工作流。
-
-它适合用来打造：
-
-- QQ 群智能助手
-- 私聊 AI 机器人
-- 群文件知识库助手
-- 企业 / 社群数据问答机器人
-- 可扩展的 Go Agent 框架样板
-
----
-
-## 🧠 核心能力
-
-### 1. 智能意图识别
-
-用户输入会先经过总控图 `FinalGraph` 的意图模型判断，自动分为：
-
-| 意图 | 说明 | 处理路径 |
-|---|---|---|
-| `SQL` | 数据库查询、SQL 生成、统计分析、报表需求 | SQL React 子图 + MCP |
-| `RAG` | 文件、文档、知识库、上传资料相关问答 | RAGChatFlow |
-| `Chat` | 普通闲聊、写作、翻译、常识问答 | `ai/chat.go` 短期记忆聊天 |
-
----
-
-### 2. 普通聊天：轻量、快速、有短期记忆
-
-普通聊天不走 RAG、不走 SQL、不调用 MCP，只使用当前会话的短期历史进行回复。
+## 2. 系统架构
 
 ```text
-用户消息
-  -> Intent_Model
-  -> Chat
-  -> ai.GenerateReply()
-  -> 返回回复
+                       ┌────────────────────┐
+                       │    Next.js Web     │
+                       │ login/chat/files   │
+                       └─────────┬──────────┘
+                                 │ HTTP / SSE
+                                 ▼
+┌──────────────┐        ┌────────────────────┐
+│ QQ OneBot WS │───────▶│  GoFrame Server    │
+│    /ws       │        │ /api/* + /ws       │
+└──────────────┘        └─────────┬──────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │   ChatService    │
+                         │ unified gateway  │
+                         └────────┬─────────┘
+                                  │
+                         ┌────────▼─────────┐
+                         │ Eino FinalGraph  │
+                         │ Chat / RAG / SQL │
+                         └─────┬─────┬──────┘
+                               │     │
+                 ┌─────────────┘     └─────────────┐
+                 ▼                                 ▼
+       ┌──────────────────┐              ┌──────────────────┐
+       │ RAG Index/Retrieve│             │ SQL Generate/Exec │
+       │ Milvus + ES       │             │ SELECT Guard + MCP│
+       └──────────────────┘              └──────────────────┘
+
+              ┌────────────────────────────────────┐
+              │ MySQL: users/conversations/messages │
+              │ files/model_call_logs/admin stats   │
+              └────────────────────────────────────┘
 ```
 
-适合：
+核心链路：
 
-- 闲聊
-- 角色对话
-- 简单问答
-- 翻译 / 润色 / 创作
-- 不需要外部资料的问题
+- Web 用户发送消息：`Next.js -> /api/chat 或 /api/chat/stream -> ChatService -> FinalGraph`。
+- QQ 用户发送消息：`OneBot /ws -> handler -> ChatTaskPool -> ChatService -> FinalGraph`。
+- 文件上传：`/api/files/upload -> LocalStorage -> FileIndexWorker -> rag_flow.GetIndexingGraph()`。
+- SQL 工具：`/api/sql/generate` 只生成，`/api/sql/execute` 经过 SELECT 安全检查后执行。
 
----
+## 3. 技术栈
 
-### 3. RAG 文件问答：让群文件变成知识库
+后端：
 
-当 QQ 群上传文件时，系统会尝试：
-
-```text
-群文件上传事件
-  -> 获取群文件下载地址
-  -> 下载文件
-  -> 文档解析
-  -> 文档切分
-  -> 向量化
-  -> 写入 Milvus / ES
-```
-
-当用户询问文件内容时：
-
-```text
-用户问题
-  -> Query Rewrite
-  -> Milvus 向量检索
-  -> Elasticsearch 关键词检索
-  -> RRF 融合重排
-  -> 拼接上下文
-  -> 模型生成回答
-```
-
-RAG 检索采用 **Milvus + Elasticsearch 双路召回**，再通过 **RRF** 进行融合排序，兼顾语义召回和关键词精确匹配。
-
----
-
-### 4. SQL 专业数据对话
-
-对于数据统计、业务指标、报表类需求，系统会走 SQL 专业流程：
-
-```text
-用户问题
-  -> 意图识别为 SQL
-  -> 检索相关表结构 / 业务知识
-  -> 生成 SQL
-  -> 用户确认
-  -> MCP 执行 SQL
-  -> 返回结果
-```
-
-这种设计避免模型直接执行危险操作，先生成 SQL，再通过确认与工具执行，提高可控性。
-
----
-
-### 5. 图式工作流编排
-
-项目使用 Eino `compose.Graph` 组织复杂流程，让每条链路都清晰可追踪。
-
-总控图大致如下：
-
-```text
-START
-  -> Intent_Model
-  -> Trans_List
-  -> Branch
-      ├─ SQL
-      │   -> React
-      │   -> ToToolCall
-      │   -> MCP
-      │   -> END
-      │
-      ├─ RAG
-      │   -> RAGChat
-      │   -> RAGToEnd
-      │   -> END
-      │
-      └─ Chat
-          -> ai.GenerateReply
-          -> ChatToEnd
-          -> END
-```
-
----
-
-## 🏗️ 项目结构
-
-```text
-qqqai
-├── adapter/              # OneBot / NapCat 事件适配与消息构造
-├── ai/                   # 普通聊天能力，包含短期记忆
-├── config/               # 环境变量配置加载
-├── flow/                 # Eino Graph 工作流
-│   ├── final_graph.go    # 总控图：意图识别与路由
-│   ├── sql_react.go      # SQL 生成与审批子图
-│   ├── rag_chat.go       # RAG 对话图
-│   └── analyst_graph.go  # 数据分析图
-├── handler/              # WebSocket 消息入口与 QQ 事件处理
-├── model/                # ChatModel / EmbeddingModel 封装
-├── rag/                  # RAG 索引、检索、工具
-├── tool/                 # MCP、SQL、Memory、Document 等工具
-├── main.go               # 服务启动入口
-└── .env                  # 运行配置
-```
-
----
-
-## 🚀 快速开始
-
-### 1. 克隆项目
-
-```bash
-git clone https://github.com/<your-name>/qqqai.git
-cd qqqai
-```
-
-### 2. 准备 `.env`
-
-在项目根目录创建 `.env`：
-
-```env
-# Bot
-BOT_QQ=你的机器人QQ号
-BOT_PORT=8080
-
-# 模型选择
-CHAT_MODEL_TYPE=deepseek
-INTENT_MODEL_TYPE=deepseek
-EMBEDDING_MODEL_TYPE=qwen
-
-# 人设
-LLM_PERSONA=你是一个专业、友好、反应迅速的 QQ 群智能助手。
-
-# DeepSeek
-DEEPSEEK_KEY=你的 DeepSeek API Key
-DEEPSEEK_CHAT_MODEL=deepseek-chat
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-
-# Qwen Embedding
-QWEN_KEY=你的通义千问 API Key
-QWEN_EMBEDDING=text-embedding-v3
-QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-
-# NapCat HTTP
-NAPCAT_HTTP_BASE_URL=http://127.0.0.1:3000
-
-# MySQL
-MYSQL_HOST=127.0.0.1
-MYSQL_PORT=3306
-MYSQL_USERNAME=root
-MYSQL_PASSWORD=your_password
-MYSQL_DATABASE=your_database
-
-# Redis
-REDIS_ADDR=127.0.0.1:6379
-REDIS_PASSWORD=
-REDIS_DB=0
-
-# Milvus
-MILVUS_ADDR=127.0.0.1:19530
-MILVUS_USERNAME=
-MILVUS_PASSWORD=
-MILVUS_COLLECTION_NAME=qqqai_docs
-MILVUS_TOP_K=5
-
-# Elasticsearch
-ELASTICSEARCH_ADDRESSES=http://127.0.0.1:9200
-ELASTICSEARCH_USERNAME=
-ELASTICSEARCH_PASSWORD=
-ELASTICSEARCH_INDEX=qqqai_docs
-
-# WebSocket
-WEBSOCKET_ALLOWED_ORIGINS=*
-WEBSOCKET_READ_TIMEOUT=300
-WEBSOCKET_WRITE_TIMEOUT=10
-
-# Session
-SESSION_MAX_MESSAGES=10
-
-# Memory
-MEMORY_DIR=data/memory
-MEMORY_SUMMARY_INTERVAL=20
-MEMORY_MAX_ENTRIES=20
-```
-
-> ⚠️ 不要把真实 API Key、数据库密码、NapCat Token 提交到 GitHub。  
-> 建议提交 `.env.example`，并把 `.env` 加入 `.gitignore`。
-
----
-
-### 3. 启动依赖服务
-
-项目依赖以下组件：
-
-- NapCat / OneBot
-- Redis
+- Go
+- GoFrame v2
+- CloudWeGo Eino Graph
+- gorilla/websocket
 - MySQL
+- Redis
 - Milvus
 - Elasticsearch
-- DeepSeek / Ark / Qwen 等模型服务
+- MCP MySQL Server
+- JWT + bcrypt
 
-如果你使用 Docker Compose，可以根据自己的环境编排这些服务。
+前端：
 
----
+- Next.js App Router
+- React
+- TypeScript
+- SSE / Streaming Response
+- lucide-react
 
-### 4. 启动项目
+AI / RAG：
 
-```bash
-go mod tidy
-go run main.go
-```
+- Eino `FinalGraph`
+- RAG Chat Flow
+- RAG Indexing Graph
+- Milvus 向量检索
+- Elasticsearch 关键词检索
+- RRF 融合排序
 
-服务启动后会监听：
+## 4. Web 端启动方式
 
-```text
-/ws
-```
+### 4.1 后端启动
 
-NapCat 需要将 OneBot WebSocket 事件转发到该地址。
-
----
-
-## 🔌 NapCat 接入说明
-
-项目通过 OneBot 事件处理 QQ 消息。
-
-支持：
-
-- 群聊消息
-- 私聊消息
-- 群文件上传事件
-
-群聊中只有 @ 机器人时才会响应，避免刷屏。
-
-```text
-群消息
-  -> 判断是否 @ 机器人
-  -> 清理 CQ 码
-  -> 生成 sessionID
-  -> FinalGraph.Invoke()
-  -> 回复群消息
-```
-
-私聊会直接进入会话处理。
-
----
-
-## 📂 群文件索引流程
-
-当群成员上传文件后，机器人会尝试自动索引：
-
-```text
-group_upload notice
-  -> get_group_file_url
-  -> download
-  -> indexing graph
-  -> Milvus / ES
-```
-
-常见问题：
-
-### 获取群文件链接 403
-
-如果日志出现：
-
-```text
-获取群文件链接接口返回状态码 403
-```
-
-通常说明 NapCat HTTP API 拒绝了请求。请检查：
-
-1. NapCat HTTP 地址是否正确；
-2. Access Token 是否一致；
-3. HTTP API 是否开启；
-4. Docker 网络是否能访问 NapCat；
-5. 反向代理是否正确透传 Authorization Header。
-
----
-
-## 🧩 关键工作流
-
-### FinalGraph
-
-总控图，负责意图识别与三路分发：
-
-```text
-SQL / RAG / Chat
-```
-
-### React SQL Graph
-
-用于数据类问题：
-
-```text
-检索表结构
-  -> 生成 SQL
-  -> 用户确认
-  -> MCP 执行
-```
-
-### RAGChatFlow
-
-用于文件知识库问答：
-
-```text
-读取会话
-  -> Query Rewrite
-  -> 检索
-  -> 构造上下文
-  -> 模型回答
-  -> 历史保存 / 摘要压缩
-```
-
-### RetrieverGraph
-
-混合检索图：
-
-```text
-Query
-  -> MilvusRetriever
-  -> ESRetriever
-  -> RRF Reranker
-  -> TopK Docs
-```
-
-### AI Chat
-
-普通聊天：
-
-```text
-Persona
-  -> Short-term History
-  -> User Message
-  -> ChatModel
-  -> Save Turn
-```
-
----
-
-## 🛡️ 安全建议
-
-- 不要提交 `.env`；
-- 不要在代码中硬编码 Token；
-- SQL 执行前建议保留人工确认；
-- MCP 工具按能力拆分，不建议把 SQL 工具和天气、时间等通用工具混在一起；
-- 群文件下载应限制文件大小和类型；
-- WebSocket Origin 根据生产环境设置白名单；
-- 数据库账号建议使用只读权限。
-
----
-
-## 🧪 调试建议
-
-### 打印意图模型输出
-
-可以在 `FinalGraph` 的 `Intent_Model` 节点中打印：
-
-```go
-log.Printf("[FinalGraph] intent model output: query=%q, intent=%q", input.Query, intentMsg.Content)
-```
-
-### 打印最终路由
-
-可以在 `AddBranch` 中打印：
-
-```go
-log.Printf("[FinalGraph] route selected: query=%q, intent=%q, route=%s", query, content, route)
-```
-
-这样可以快速判断问题到底被分到了 SQL、RAG 还是 Chat。
-
----
-
-## 🗺️ Roadmap
-
-- [ ] 增加时间 / 天气 / 新闻等 Tool 分支
-- [ ] 群文件索引支持更多格式
-- [ ] 管理后台：查看知识库、会话、索引状态
-- [ ] SQL 执行权限控制与审计
-
----
-
-## GoFrame Web API + Next.js Web Console
-
-本仓库现在保留原有 NapCat / OneBot `/ws` 接入，同时新增 GoFrame Web API 层和独立 `web/` Next.js 前端。QQ 端和 Web 端都会通过 `internal/service.ChatService` 进入同一套 Eino `FinalGraph`，因此普通聊天、RAG、SQL 路由能力保持一致。
-
-### 新增能力
-
-- GoFrame Server：启动后同时提供 `/ws` 和 `/api/*`。
-- JWT 认证：`POST /api/auth/register`、`POST /api/auth/login`、`GET /api/auth/me`。
-- Web 会话与消息持久化：`conversations` / `messages` 表保存 Web 聊天记录。
-- Web Chat：`POST /api/chat` 同步返回，`POST /api/chat/stream` 伪流式 SSE 输出，支持请求 context 取消。
-- 文件上传：`POST /api/files/upload` 保存到本地 `uploads/`，并提交异步 RAG 索引任务。
-- RAG 文件索引 Worker：使用 goroutine + channel worker pool 调用 `rag_flow.GetIndexingGraph()`，更新 `files.status`。
-- SQL 安全接口：`/api/sql/generate` 只生成 SQL；`/api/sql/execute` 需要 `confirm=true`，且仅允许单条安全 `SELECT`。
-- Admin API：`/api/admin/stats`、`/api/admin/users`、`/api/admin/conversations`、`/api/admin/files`。
-- Next.js 前端：登录、注册、聊天、会话列表、流式输出、文件上传、管理员统计。
-
-### 数据库初始化
-
-先创建 MySQL 数据库，然后执行：
-
-```bash
-mysql -h 127.0.0.1 -P 3306 -u root -p qqqai < manifest/schema.sql
-```
-
-管理员账号由 `.env` 中的 `ADMIN_EMAIL` 和 `ADMIN_PASSWORD` 在后端启动时自动创建或更新。
-
-### 后端运行
+先复制环境变量：
 
 ```bash
 cp .env.example .env
+```
+
+编辑 `.env` 中的模型、MySQL、Redis、Milvus、Elasticsearch、JWT 和管理员配置。
+
+启动后端：
+
+```bash
 go run .
 ```
 
-后端默认监听 `BOT_PORT=8080`。OneBot 仍连接：
+默认后端地址：
 
 ```text
-ws://127.0.0.1:8080/ws
+http://127.0.0.1:8080
 ```
 
-Web API 默认地址：
+### 4.2 前端启动
 
-```text
-http://127.0.0.1:8080/api
-```
-
-### 前端运行
+进入 Web 目录：
 
 ```bash
 cd web
@@ -495,54 +124,360 @@ npm install
 npm run dev
 ```
 
-前端默认读取：
-
-```env
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
-```
-
-然后打开：
+默认前端地址：
 
 ```text
 http://localhost:3000
 ```
 
-### 并发设计
+前端通过以下环境变量访问后端：
 
-- `ChatTaskPool` 使用固定数量 goroutine 从 channel 消费聊天任务，QQ 端和 Web 同步聊天都复用 `ChatService`。
-- `FileIndexWorker` 使用独立 worker pool 异步处理上传文件索引，单个文件失败只更新该文件状态，不阻塞上传接口和其他任务。
-- SSE 接口在写入每个 chunk 前检查 request context；客户端断开后停止写入并结束 handler。
-- [ ] 多群隔离知识库
-- [ ] 支持插件化 MCP 工具注册
-- [ ] 支持流式回复
-- [ ] 支持 Docker Compose 一键部署
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
+```
 
----
+## 5. QQ OneBot 启动方式
 
-## 🤝 贡献
+QQ OneBot 接入保留原有 `/ws` 路由。
 
-欢迎提交 Issue 和 Pull Request。
+后端启动后，NapCat / OneBot 连接：
 
-你可以从这些方向参与：
+```text
+ws://127.0.0.1:8080/ws
+```
 
-- 新增模型适配器
-- 优化 RAG 检索效果
-- 增加 MCP 工具
-- 完善 Docker 部署
-- 改进提示词和意图识别
-- 优化 QQ 群文件处理
+需要在 `.env` 中配置：
 
----
+```env
+BOT_QQ=你的机器人QQ号
+BOT_PORT=8080
+WEBSOCKET_ALLOWED_ORIGINS=*
+WEBSOCKET_READ_TIMEOUT=300
+WEBSOCKET_WRITE_TIMEOUT=10
+NAPCAT_HTTP_BASE_URL=http://127.0.0.1:3000
+```
 
-## 📄 License
+群聊中需要 @ 机器人后才会触发处理；私聊会直接处理。OneBot 端不会绕过 Web 端能力，而是和 Web 端一样复用 `ChatService` 与 `FinalGraph`。
 
-本项目建议使用 MIT License。  
-如果你需要其他 License，请根据实际使用场景自行调整。
+## 6. 数据库初始化
 
----
+项目使用 MySQL 持久化 Web 用户、会话、消息、文件和模型调用日志。
 
-## 🌟 一句话介绍
+初始化 schema：
 
-**QQQAI 是一个会聊天、会读文件、会查数据的 QQ 智能 Agent Bot。**
+```bash
+mysql -h 127.0.0.1 -P 3306 -u root -p qqqai < manifest/schema.sql
+```
 
-它把 QQ 机器人从“自动回复工具”升级成了一个真正可扩展的多能力智能助理。
+主要数据表：
+
+- `users`：用户、角色、密码哈希。
+- `conversations`：Web 会话。
+- `messages`：Web 消息记录。
+- `files`：上传文件与索引状态。
+- `model_call_logs`：聊天、SQL 生成、SQL 执行日志。
+
+管理员账号由后端启动时根据 `.env` 自动创建或更新：
+
+```env
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=change-me
+```
+
+## 7. 文件上传与 RAG 索引
+
+Web 端支持上传文件：
+
+```text
+POST /api/files/upload
+```
+
+当前文件存储流程：
+
+```text
+用户上传文件
+  -> Storage interface
+  -> LocalStorage
+  -> uploads/{user_id}/{uuid}_{safe_name}
+  -> files.status = pending
+  -> FileIndexWorker queue
+  -> rag_flow.GetIndexingGraph()
+  -> Milvus + Elasticsearch
+  -> files.status = indexed / failed
+```
+
+重点设计：
+
+1. 文件上传接口只负责保存文件和提交索引任务，不阻塞等待完整索引完成。
+2. `FileIndexWorker` 使用 goroutine + channel + worker pool 控制索引并发。
+3. 单个文件索引失败只更新该文件 `files.status=failed`，不会影响其他任务。
+4. 文件存储抽象为 `Storage interface`，当前实现为 `LocalStorage`。
+5. 后续可以扩展为 MinIO、OSS、S3 等对象存储，只需要替换 Storage 实现。
+
+## 8. SQL 安全执行机制
+
+SQL 分为两个阶段：
+
+```text
+/api/sql/generate
+  -> 只生成 SQL
+  -> 返回给用户确认
+
+/api/sql/execute
+  -> 要求 confirm=true
+  -> 服务端安全检查
+  -> 包装 LIMIT
+  -> 调用 MCP MySQL 工具执行
+```
+
+安全规则：
+
+- 只允许单条 `SELECT`。
+- 拒绝多语句。
+- 剥离 SQL 注释后再检查。
+- 拒绝危险关键字：
+  - `INSERT`
+  - `UPDATE`
+  - `DELETE`
+  - `DROP`
+  - `ALTER`
+  - `TRUNCATE`
+  - `CREATE`
+  - `GRANT`
+  - `REVOKE`
+  - `CALL`
+  - `LOAD`
+  - `OUTFILE`
+  - `DUMPFILE`
+  - `FOR UPDATE`
+- 执行前包装：
+
+```sql
+SELECT * FROM (<user_select_sql>) AS qqqai_safe LIMIT SQL_MAX_ROWS
+```
+
+行数上限由 `.env` 控制：
+
+```env
+SQL_MAX_ROWS=100
+```
+
+这个设计保证模型不能直接执行写操作，也不能绕过后端确认和 SELECT 白名单。
+
+## 9. Go 语言优势设计
+
+### 9.1 高并发对话调度
+
+`ChatTaskPool` 基于 goroutine + channel 实现：
+
+```text
+QQ/Web 请求
+  -> ChatTask
+  -> channel queue
+  -> worker goroutines
+  -> ChatService
+  -> FinalGraph
+```
+
+优势：
+
+- 控制多用户 AI 请求并发，避免瞬时请求打爆模型服务。
+- channel 队列满时可以快速返回错误。
+- worker 数量可配置：
+
+```env
+CHAT_WORKER_COUNT=4
+CHAT_QUEUE_SIZE=64
+```
+
+### 9.2 长连接流式输出
+
+Web 聊天流式接口：
+
+```text
+POST /api/chat/stream
+```
+
+它使用 SSE / Streaming Response 将 AI 回复增量推给浏览器：
+
+```text
+ChatService.Stream()
+  -> chunk channel
+  -> SSE data event
+  -> 浏览器实时追加显示
+```
+
+同时 handler 会监听 request context：
+
+```text
+客户端断开
+  -> ctx.Done()
+  -> 停止写入
+  -> 结束流式响应
+```
+
+### 9.3 RAG 文件并发索引
+
+文件上传后不会同步阻塞索引，而是进入 `FileIndexWorker`：
+
+```text
+FileIndexTask
+  -> channel queue
+  -> worker pool
+  -> RAG IndexingGraph
+```
+
+优势：
+
+- 多文件上传时可控并发。
+- 大文件索引不会阻塞 Web 请求。
+- 失败状态可持久化到 MySQL。
+
+配置：
+
+```env
+FILE_INDEX_WORKER_COUNT=2
+FILE_INDEX_QUEUE_SIZE=32
+```
+
+### 9.4 存储扩展
+
+文件存储层使用接口：
+
+```go
+type Storage interface {
+    Save(ctx context.Context, userID int64, file *multipart.FileHeader) (*StoredFile, error)
+    Delete(ctx context.Context, path string) error
+}
+```
+
+当前实现：
+
+```text
+LocalStorage -> uploads/
+```
+
+后续扩展：
+
+```text
+MinIOStorage
+S3Storage
+OSSStorage
+```
+
+业务层不关心文件最终存储在哪里，只依赖 `Storage interface`。
+
+### 9.5 多端统一
+
+Web 端和 QQ OneBot 端共用：
+
+```text
+ChatService
+  -> Eino FinalGraph
+  -> Chat / RAG / SQL
+```
+
+这意味着：
+
+- Web 和 QQ 使用同一套意图识别。
+- Web 和 QQ 使用同一套 RAG 问答。
+- Web 和 QQ 使用同一套 SQL Agent 核心。
+- 后续修改 Agent 能力时不需要分别维护两套逻辑。
+
+## 10. API 列表
+
+### Auth
+
+| Method | Path | 说明 |
+|---|---|---|
+| `POST` | `/api/auth/register` | 注册 |
+| `POST` | `/api/auth/login` | 登录并返回 JWT |
+| `GET` | `/api/auth/me` | 获取当前用户 |
+
+### Conversations
+
+| Method | Path | 说明 |
+|---|---|---|
+| `POST` | `/api/conversations` | 创建会话 |
+| `GET` | `/api/conversations` | 会话列表 |
+| `GET` | `/api/conversations/{id}/messages` | 消息列表 |
+| `DELETE` | `/api/conversations/{id}` | 删除会话 |
+
+### Chat
+
+| Method | Path | 说明 |
+|---|---|---|
+| `POST` | `/api/chat` | 普通 Web 聊天 |
+| `POST` | `/api/chat/stream` | SSE 流式聊天 |
+
+### Files
+
+| Method | Path | 说明 |
+|---|---|---|
+| `POST` | `/api/files/upload` | 上传文件并提交 RAG 索引 |
+| `GET` | `/api/files` | 文件列表 |
+| `DELETE` | `/api/files/{id}` | 删除文件记录和本地文件 |
+
+### SQL
+
+| Method | Path | 说明 |
+|---|---|---|
+| `POST` | `/api/sql/generate` | 生成 SQL，不执行 |
+| `POST` | `/api/sql/execute` | 安全检查后执行 SELECT |
+
+### Admin
+
+| Method | Path | 说明 |
+|---|---|---|
+| `GET` | `/api/admin/stats` | 管理员统计 |
+| `GET` | `/api/admin/users` | 用户列表 |
+| `GET` | `/api/admin/conversations` | 会话列表 |
+| `GET` | `/api/admin/files` | 文件列表 |
+
+### OneBot
+
+| Method | Path | 说明 |
+|---|---|---|
+| `GET` | `/ws` | OneBot WebSocket 连接 |
+
+## 11. 前端页面说明
+
+Next.js 前端位于 `web/`。
+
+页面：
+
+- `/login`：用户登录，成功后保存 JWT。
+- `/register`：用户注册。
+- `/chat`：Web 聊天页，包含会话列表、消息区、SSE 流式回复。
+- `/files`：文件上传、文件列表、索引状态展示、删除文件。
+- `/admin`：管理员统计页面，展示用户数、会话数、消息数、文件数、模型调用数等。
+
+前端请求统一通过 `web/lib/api.ts`：
+
+- 自动附带 Bearer Token。
+- 统一处理后端 `{code,message,data,request_id}` 响应。
+- 401 时清理 token 并跳转登录。
+- `streamChat()` 使用 Fetch Streaming 读取 SSE chunk 并实时追加到消息区。
+
+## 运行检查
+
+后端测试：
+
+```bash
+go test ./...
+```
+
+前端构建：
+
+```bash
+cd web
+npm run build
+```
+
+## 项目亮点
+
+- 高并发对话调度：`ChatTaskPool` 使用 goroutine + channel 控制 AI 请求并发。
+- 长连接流式输出：SSE / Streaming Response 支持 Web 端 AI 回复实时增量显示。
+- RAG 文件并发索引：`FileIndexWorker` 使用 worker pool 异步执行索引任务。
+- 存储扩展：`Storage interface` 当前接 LocalStorage，后续可扩展 MinIO。
+- 多端统一：Web 与 QQ OneBot 共用 `ChatService` 和 Eino `FinalGraph`。
