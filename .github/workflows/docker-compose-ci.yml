@@ -1,0 +1,30 @@
+name: Docker Compose CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-build:
+    name: Validate and build Compose images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Prepare CI env file
+        run: cp .env.example .env
+
+      - name: Show Docker Compose version
+        run: docker compose version
+
+      - name: Validate Compose config
+        run: docker compose config
+
+      - name: Build deploy images
+        run: docker compose build app web proxy
